@@ -1,0 +1,3123 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SMARTROAD — Sistem Monitoring Infrastruktur Jalan Provinsi Lampung</title>
+  
+  <!-- Security Headers & Metadata -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+  
+  <!-- Fonts: Plus Jakarta Sans, Inter, Fira Code -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'primary': '#002043',
+            'primary-container': '#17365d',
+            'secondary': '#0051d5',
+            'secondary-container': '#316bf3',
+            'secondary-fixed': '#dbe1ff',
+            'surface': '#f8f9ff',
+            'surface-container-lowest': '#ffffff',
+            'surface-container-low': '#eff4ff',
+            'surface-container': '#e5eeff',
+            'surface-container-high': '#dce9ff',
+            'surface-container-highest': '#d3e4fe',
+            'on-surface': '#0b1c30',
+            'on-surface-variant': '#43474e',
+            'outline-variant': '#c4c6cf',
+            'status-menunggu': '#f97316',
+            'status-verifikasi': '#0051d5',
+            'status-diterima': '#16a34a',
+            'status-perbaikan': '#9333ea',
+            'status-selesai': '#14532d',
+            'status-ditolak': '#dc2626',
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            heading: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"Fira Code"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Leaflet GIS Map CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .leaflet-container { width: 100%; height: 100%; border-radius: 0.75rem; z-index: 10; }
+  </style>
+</head>
+<body class="bg-surface text-on-surface antialiased font-sans selection:bg-secondary-fixed selection:text-primary">
+  <div id="root"></div>
+
+  <!-- APPLICATION SCRIPT WITH HARDENED SECURITY -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // --- SECURITY HELPER: HTML ESCAPING FUNCTION (SEC-01 & SEC-XSS) ---
+    const escapeHtml = (text) => {
+      if (!text) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
+    // --- CONFIG & CONSTANTS ---
+    const FOOTER_TEXT = "Copyright © 2026 by Arifki Al Kausar dan Dr. Erliyan Redy Susanto, M.Kom";
+    const APP_DATE = "Rabu, 14 Mei 2026";
+
+    const STORAGE_KEYS = {
+      AUTH: 'smartroad_auth_v2',
+      CURRENT_USER: 'smartroad_current_user_v2',
+      REPORTS: 'smartroad_reports_v2',
+      ROADS: 'smartroad_roads_v2',
+      USERS: 'smartroad_users_v2',
+      AUDIT: 'smartroad_audit_v2'
+    };
+
+    const LAMPUNG_DISTRICTS = [
+      'Kota Bandar Lampung', 'Kota Metro', 'Kabupaten Lampung Selatan', 'Kabupaten Pesawaran',
+      'Kabupaten Pringsewu', 'Kabupaten Tanggamus', 'Kabupaten Lampung Barat', 'Kabupaten Pesisir Barat',
+      'Kabupaten Lampung Tengah', 'Kabupaten Lampung Timur', 'Kabupaten Lampung Utara', 'Kabupaten Way Kanan',
+      'Kabupaten Tulang Bawang', 'Kabupaten Tulang Bawang Barat', 'Kabupaten Mesuji'
+    ];
+
+    const CATEGORIES = [
+      { id: 'cat-1', name: 'Jalan Berlubang', icon: 'circle-dot' },
+      { id: 'cat-2', name: 'Retak Buaya', icon: 'grid' },
+      { id: 'cat-3', name: 'Amblas / Longsor', icon: 'arrow-down-circle' },
+      { id: 'cat-4', name: 'Rusak Berat', icon: 'alert-triangle' },
+      { id: 'cat-5', name: 'Tergenang / Drainase', icon: 'droplets' },
+      { id: 'cat-6', name: 'Lainnya', icon: 'more-horizontal' },
+    ];
+
+    // INITIAL USERS WITH HARDENED PASSWORD STORE
+    const INITIAL_USERS = [
+      {
+        id: 'usr-warga-1',
+        name: 'Budi Santoso',
+        email: 'warga@smartroad.lampungprov.go.id',
+        role: 'Masyarakat',
+        nik: '1871021405920003',
+        phone: '+6281273948123',
+        reputation_score: 96,
+        password: 'smartroad2026',
+        is_active: true
+      },
+      {
+        id: 'usr-petugas-1',
+        name: 'Ir. Hendrawan, S.T., M.T.',
+        email: 'petugas@smartroad.lampungprov.go.id',
+        role: 'Petugas',
+        nik: '198204122008011005',
+        phone: '+6281369123456',
+        uptd_region: 'UPTD Wilayah I (Bandar Lampung & Lamsel)',
+        reputation_score: 99,
+        password: 'smartroad2026',
+        is_active: true
+      },
+      {
+        id: 'usr-admin-1',
+        name: 'Administrator Dinas BMBK',
+        email: 'admin@smartroad.lampungprov.go.id',
+        role: 'Admin',
+        nik: '197908232003121002',
+        phone: '+628117901234',
+        uptd_region: 'Dinas BMBK Provinsi Lampung (Pusat)',
+        reputation_score: 100,
+        password: 'smartroad2026',
+        is_active: true
+      }
+    ];
+
+    const INITIAL_ROADS = [
+      { id: 'rd-1', code: 'KDJ-LPG-001', name: 'Jl. Z.A. Pagar Alam', district: 'Kota Bandar Lampung', length: 7.4, status: 'Mantap', sta: 'STA 0+000 - STA 7+400' },
+      { id: 'rd-2', code: 'KDJ-LPG-002', name: 'Jl. Teuku Umar', district: 'Kota Bandar Lampung', length: 4.8, status: 'Rusak Ringan', sta: 'STA 0+000 - STA 4+800' },
+      { id: 'rd-3', code: 'KDJ-LPG-003', name: 'Jl. Raden Intan', district: 'Kota Bandar Lampung', length: 3.2, status: 'Mantap', sta: 'STA 0+000 - STA 3+200' },
+      { id: 'rd-4', code: 'KDJ-LPG-004', name: 'Jl. Ryacudu (Akses Tol Itera)', district: 'Kabupaten Lampung Selatan', length: 8.5, status: 'Rusak Berat', sta: 'STA 0+000 - STA 8+500' },
+      { id: 'rd-5', code: 'KDJ-LPG-005', name: 'Jl. Soekarno-Hatta (By Pass)', district: 'Kota Bandar Lampung', length: 18.2, status: 'Rusak Ringan', sta: 'STA 0+000 - STA 18+200' },
+    ];
+
+    const INITIAL_REPORTS = [
+      {
+        id: 'rpt-001',
+        report_code: '#RPT-2026-0891',
+        reporter_name: 'Budi Santoso',
+        reporter_nik_masked: '187102********03',
+        reporter_reputation: 96,
+        road_name: 'Jl. Ryacudu (Akses Tol Itera)',
+        district: 'Kabupaten Lampung Selatan',
+        subdistrict: 'Jati Agung',
+        category_name: 'Jalan Berlubang',
+        title: 'Lubang Dalam di Lajur Cepat Dekat Kampus Itera',
+        description: 'Terdapat 3 lubang berdiameter sekitar 80 cm dengan kedalaman 15 cm di lajur kanan arah gerbang tol. Sangat membahayakan pengendara motor.',
+        severity: 'Berat',
+        latitude: -5.358241,
+        longitude: 105.312954,
+        address: 'Jl. Ryacudu KM 4.2, Seberang Asrama Mahasiswa ITERA, Way Huwi',
+        status: 'Dalam Perbaikan',
+        ai_urgency_score: 9.4,
+        sla_seconds_left: 14200,
+        created_at: '12 Mei 2026, 09:15 WIB',
+        photos: {
+          before: 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+          in_progress: 'https://images.unsplash.com/photo-1584467735871-8e85353a8413?auto=format&fit=crop&w=800&q=80',
+          after: null
+        },
+        work_update: {
+          spk_number: '602/088/SPK-BM/DPUPR/2026',
+          contractor: 'PT Lampung Prasarana Konstruksi (UPTD I)',
+          length_m: 6.5,
+          width_m: 2.2,
+          depth_m: 0.15,
+          volume_m3: 2.14,
+          progress: 65,
+          cost_idr: 14500000,
+          notes: 'Telah dilakukan cutting jack hammer & tack coat emulsi. Tahap finishing hotmix AC-WC.'
+        },
+        histories: [
+          { status: 'Menunggu Validasi', time: '12 Mei 2026 09:15', note: 'Laporan diajukan warga dengan koordinat GPS valid.', by: 'Budi Santoso' },
+          { status: 'Diverifikasi', time: '13 Mei 2026 10:00', note: 'Verifikasi lapangan UPTD Wilayah I konfirmasi kondisi kritis.', by: 'Ir. Hendrawan, S.T., M.T.' },
+          { status: 'Diterima / SPK Diterbitkan', time: '13 Mei 2026 14:30', note: 'SPK 602/088/SPK-BM/DPUPR/2026 diterbitkan ke rekanan.', by: 'Admin Dinas BMBK' },
+          { status: 'Dalam Perbaikan', time: '14 Mei 2026 08:30', note: 'Tim respon cepat UPTD I mulai penanganan fisik di lapangan.', by: 'Ir. Hendrawan, S.T., M.T.' }
+        ]
+      },
+      {
+        id: 'rpt-002',
+        report_code: '#RPT-2026-0892',
+        reporter_name: 'Ahmad Dahlan',
+        reporter_nik_masked: '187103********12',
+        reporter_reputation: 91,
+        road_name: 'Jl. Teuku Umar',
+        district: 'Kota Bandar Lampung',
+        subdistrict: 'Kedaton',
+        category_name: 'Retak Buaya',
+        title: 'Retak Buaya Parah Depan Pasar Koga',
+        description: 'Permukaan aspal pecah memanjang lebih dari 15 meter, struktur jalan amblas saat dilintasi bus/truk.',
+        severity: 'Sedang',
+        latitude: -5.391218,
+        longitude: 105.258921,
+        address: 'Jl. Teuku Umar No. 88, Samping JPO Pasar Koga, Kedaton',
+        status: 'Menunggu Validasi',
+        ai_urgency_score: 7.2,
+        sla_seconds_left: 48900,
+        created_at: '13 Mei 2026, 11:00 WIB',
+        photos: {
+          before: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?auto=format&fit=crop&w=800&q=80',
+          in_progress: null,
+          after: null
+        },
+        histories: [
+          { status: 'Menunggu Validasi', time: '13 Mei 2026 11:00', note: 'Menunggu inspeksi verifikator UPTD I.', by: 'Ahmad Dahlan' }
+        ]
+      },
+      {
+        id: 'rpt-003',
+        report_code: '#RPT-2026-0885',
+        reporter_name: 'Siti Aminah',
+        reporter_nik_masked: '187101********88',
+        reporter_reputation: 98,
+        road_name: 'Jl. Z.A. Pagar Alam',
+        district: 'Kota Bandar Lampung',
+        subdistrict: 'Kedaton',
+        category_name: 'Jalan Berlubang',
+        title: 'Lubang Tikungan Depan Kampus Teknokrat',
+        description: 'Aspal mengelupas sedalam 10 cm sebelum flyover Teknokrat. Sangat membahayakan mahasiswa & pengendara.',
+        severity: 'Berat',
+        latitude: -5.381423,
+        longitude: 105.257122,
+        address: 'Jl. Z.A. Pagar Alam No. 9-11, Depan Gerbang Utama Universitas Teknokrat Indonesia',
+        status: 'Selesai',
+        ai_urgency_score: 8.9,
+        sla_seconds_left: 0,
+        created_at: '08 Mei 2026, 08:00 WIB',
+        photos: {
+          before: 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80',
+          in_progress: 'https://images.unsplash.com/photo-1584467735871-8e85353a8413?auto=format&fit=crop&w=800&q=80',
+          after: 'https://images.unsplash.com/photo-1621905251918-48416bd8575a?auto=format&fit=crop&w=800&q=80'
+        },
+        work_update: {
+          spk_number: '602/074/SPK-BM/DPUPR/2026',
+          contractor: 'Swakelola Rutin UPTD I',
+          length_m: 4.2,
+          width_m: 1.8,
+          depth_m: 0.10,
+          volume_m3: 0.75,
+          progress: 100,
+          cost_idr: 6800000,
+          notes: 'Penambalan aspal panas tuntas 100%. Telah dilakukan uji kerataan dan serah terima pekerjaan (PHO).'
+        },
+        rating: 5,
+        feedback: 'Jalan depan kampus sekarang mulus dan aman! Pelayanan cepat dan tanggap!',
+        histories: [
+          { status: 'Menunggu Validasi', time: '08 Mei 2026 08:00', note: 'Laporan diajukan warga.', by: 'Siti Aminah' },
+          { status: 'Diverifikasi', time: '08 Mei 2026 14:00', note: 'Survei teknis disetujui.', by: 'Ir. Hendrawan, S.T., M.T.' },
+          { status: 'Diterima / SPK Diterbitkan', time: '09 Mei 2026 08:30', note: 'Penerbitan SPK penanganan cepat.', by: 'Admin BMBK' },
+          { status: 'Dalam Perbaikan', time: '09 Mei 2026 10:00', note: 'Pengaspalan hotmix AC-WC.', by: 'Ir. Hendrawan, S.T., M.T.' },
+          { status: 'Selesai', time: '10 Mei 2026 11:30', note: 'Serah terima hasil pekerjaan & uji mutu PHO.', by: 'Ir. Hendrawan, S.T., M.T.' }
+        ]
+      },
+      {
+        id: 'rpt-004',
+        report_code: '#RPT-2026-0870',
+        reporter_name: 'Rudi Hartono',
+        reporter_nik_masked: '187105********44',
+        reporter_reputation: 82,
+        road_name: 'Jl. Soekarno-Hatta (By Pass)',
+        district: 'Kota Bandar Lampung',
+        subdistrict: 'Sukarame',
+        category_name: 'Lainnya',
+        title: 'Brosur Liar Menutupi Rambu Jalan',
+        description: 'Rambu penunjuk arah tertutup stiker dan pamflet liar.',
+        severity: 'Ringan',
+        latitude: -5.372100,
+        longitude: 105.289100,
+        address: 'Jl. Soekarno Hatta KM 11, Depan SPBU By Pass Sukarame',
+        status: 'Ditolak',
+        rejection_reason: 'Bukan merupakan wewenang pemeliharaan perkerasan fisik BMBK (wewenang Dishub kota). Laporan telah diteruskan via kanal SP4N LAPOR! Kota.',
+        ai_urgency_score: 3.1,
+        sla_seconds_left: 0,
+        created_at: '04 Mei 2026, 10:00 WIB',
+        photos: {
+          before: 'https://images.unsplash.com/photo-1572945753563-80495678363d?auto=format&fit=crop&w=800&q=80',
+          in_progress: null,
+          after: null
+        },
+        histories: [
+          { status: 'Menunggu Validasi', time: '04 Mei 2026 10:00', note: 'Masuk antrean sistem.', by: 'Rudi Hartono' },
+          { status: 'Ditolak', time: '05 Mei 2026 09:15', note: 'Ditolak: Bukan wewenang pemeliharaan jalan dinas BMBK.', by: 'Ir. Hendrawan, S.T., M.T.' }
+        ]
+      }
+    ];
+
+    const INITIAL_AUDIT_LOGS = [
+      {
+        id: 'aud-001',
+        audit_code: 'AUD-2026-8812',
+        actor_name: 'Ir. Hendrawan, S.T., M.T.',
+        actor_role: 'Petugas',
+        action: 'VERIFY_REPORT',
+        entity_id: 'rpt-001',
+        timestamp: '13 Mei 2026, 10:00:14 WIB',
+        hash: '9f83a9e2f5b61e0b5c1a4e6d78291039401bfd7a123e456789abcdef01234567',
+        metadata: {
+          report_code: '#RPT-2026-0891',
+          old_status: 'Menunggu Validasi',
+          new_status: 'Diverifikasi',
+          gps_verified: true,
+          urgency_confirmed: 'Kritis'
+        }
+      },
+      {
+        id: 'aud-002',
+        audit_code: 'AUD-2026-8813',
+        actor_name: 'Administrator Dinas BMBK',
+        actor_role: 'Admin',
+        action: 'ISSUE_SPK',
+        entity_id: 'spk-001',
+        timestamp: '13 Mei 2026, 14:30:45 WIB',
+        hash: '4a3b8c2d1e0f9876543210fedcba9876543210abcdef0123456789abcdef0123',
+        metadata: {
+          spk_number: '602/088/SPK-BM/DPUPR/2026',
+          report_code: '#RPT-2026-0891',
+          assigned_contractor: 'PT Lampung Prasarana Konstruksi',
+          budget_idr: 14500000
+        }
+      },
+      {
+        id: 'aud-003',
+        audit_code: 'AUD-2026-8814',
+        actor_name: 'Budi Santoso',
+        actor_role: 'Masyarakat',
+        action: 'CREATE_REPORT',
+        entity_id: 'rpt-002',
+        timestamp: '13 Mei 2026, 11:00:22 WIB',
+        hash: 'e8c21a4f0b3d5e7912468ace013579bdf02468ace13579bdf02468ace13579bd',
+        metadata: {
+          report_code: '#RPT-2026-0892',
+          category: 'Retak Buaya',
+          severity: 'Sedang',
+          coords: [-5.391218, 105.258921]
+        }
+      }
+    ];
+
+    // Helper: LocalStorage Loader with Fallback
+    const loadStorage = (key, fallback) => {
+      try {
+        const item = localStorage.getItem(key);
+        return item ? JSON.parse(item) : fallback;
+      } catch (e) {
+        console.warn(`Error reading localStorage ${key}:`, e);
+        return fallback;
+      }
+    };
+
+    const saveStorage = (key, data) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(data));
+      } catch (e) {
+        console.warn(`Error saving localStorage ${key}:`, e);
+      }
+    };
+
+    // Helper: Status badge color classes
+    const getStatusStyle = (status) => {
+      switch(status) {
+        case 'Menunggu Validasi': return 'bg-amber-100 text-amber-800 border-amber-300';
+        case 'Diverifikasi': return 'bg-blue-100 text-blue-800 border-blue-300';
+        case 'Diterima':
+        case 'Diterima / SPK Diterbitkan': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+        case 'Dalam Perbaikan': return 'bg-purple-100 text-purple-800 border-purple-300';
+        case 'Selesai': return 'bg-green-100 text-green-900 border-green-300';
+        case 'Ditolak': return 'bg-rose-100 text-rose-800 border-rose-300';
+        default: return 'bg-slate-100 text-slate-800 border-slate-300';
+      }
+    };
+
+    const getSeverityBadge = (severity) => {
+      switch(severity) {
+        case 'Berat': return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"><span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></span>Kritis / Berat</span>;
+        case 'Sedang': return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Sedang</span>;
+        default: return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">Ringan</span>;
+      }
+    };
+
+    const formatSLA = (seconds) => {
+      if (seconds <= 0) return 'Tuntas / PHO';
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    };
+
+    // --- MAIN APP COMPONENT ---
+    function App() {
+      // 1. Authenticated state & persistent user session
+      const [isAuthenticated, setIsAuthenticated] = useState(() => {
+        return localStorage.getItem(STORAGE_KEYS.AUTH) === 'true';
+      });
+
+      const [currentUser, setCurrentUser] = useState(() => {
+        return loadStorage(STORAGE_KEYS.CURRENT_USER, INITIAL_USERS[0]);
+      });
+
+      const [users, setUsers] = useState(() => {
+        return loadStorage(STORAGE_KEYS.USERS, INITIAL_USERS);
+      });
+
+      const [activeTab, setActiveTab] = useState('dashboard');
+
+      // 5. Data states with automatic LocalStorage synchronization
+      const [reports, setReports] = useState(() => {
+        return loadStorage(STORAGE_KEYS.REPORTS, INITIAL_REPORTS);
+      });
+
+      const [roads, setRoads] = useState(() => {
+        return loadStorage(STORAGE_KEYS.ROADS, INITIAL_ROADS);
+      });
+
+      const [auditLogs, setAuditLogs] = useState(() => {
+        return loadStorage(STORAGE_KEYS.AUDIT, INITIAL_AUDIT_LOGS);
+      });
+
+      // Modals & UI States
+      const [selectedReport, setSelectedReport] = useState(null);
+      const [auditModalData, setAuditModalData] = useState(null);
+      const [rejectModalReport, setRejectModalReport] = useState(null);
+      const [rejectReasonText, setRejectReasonText] = useState('');
+      const [showLogoutModal, setShowLogoutModal] = useState(false);
+      const [toastMessage, setToastMessage] = useState(null);
+
+      // Mobile sidebar toggle state
+      const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+      // Save to localStorage on state changes
+      useEffect(() => {
+        saveStorage(STORAGE_KEYS.REPORTS, reports);
+      }, [reports]);
+
+      useEffect(() => {
+        saveStorage(STORAGE_KEYS.ROADS, roads);
+      }, [roads]);
+
+      useEffect(() => {
+        saveStorage(STORAGE_KEYS.USERS, users);
+      }, [users]);
+
+      useEffect(() => {
+        saveStorage(STORAGE_KEYS.AUDIT, auditLogs);
+      }, [auditLogs]);
+
+      useEffect(() => {
+        localStorage.setItem(STORAGE_KEYS.AUTH, isAuthenticated ? 'true' : 'false');
+        if (currentUser) {
+          // SEC-05: Ensure password is never stored into current user session
+          const { password, ...safeUser } = currentUser;
+          saveStorage(STORAGE_KEYS.CURRENT_USER, safeUser);
+        }
+      }, [isAuthenticated, currentUser]);
+
+      // SLA Countdown Tick (Updates every 1s)
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setReports(prev => prev.map(r => ({
+            ...r,
+            sla_seconds_left: r.sla_seconds_left > 0 ? r.sla_seconds_left - 1 : 0
+          })));
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // Trigger Lucide icons refresh
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      const showToast = (msg) => {
+        setToastMessage(msg);
+        setTimeout(() => setToastMessage(null), 3500);
+      };
+
+      // Role switcher handler (Sanitized user session)
+      const handleRoleChange = (roleName) => {
+        const matched = users.find(u => u.role === roleName) || INITIAL_USERS.find(u => u.role === roleName);
+        if (matched) {
+          const { password, ...safeUser } = matched;
+          setCurrentUser(safeUser);
+          setActiveTab('dashboard');
+          setIsMobileMenuOpen(false);
+          showToast(`Mode pengguna beralih ke: ${matched.role} (${matched.name})`);
+        }
+      };
+
+      // Logout execution handler
+      const handleConfirmLogout = () => {
+        setIsAuthenticated(false);
+        localStorage.removeItem(STORAGE_KEYS.AUTH);
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+        setShowLogoutModal(false);
+        setIsMobileMenuOpen(false);
+        setActiveTab('dashboard');
+        showToast('Anda telah keluar dari sistem SMARTROAD.');
+      };
+
+      // Rejection with mandatory reason and input sanitization
+      const handleRejectSubmit = () => {
+        const cleanReason = escapeHtml(rejectReasonText.trim());
+        if (!cleanReason) {
+          alert('Alasan penolakan wajib diisi!');
+          return;
+        }
+
+        setReports(prev => prev.map(r => {
+          if (r.id === rejectModalReport.id) {
+            return {
+              ...r,
+              status: 'Ditolak',
+              rejection_reason: cleanReason,
+              histories: [
+                ...r.histories,
+                {
+                  status: 'Ditolak',
+                  time: '14 Mei 2026 19:15',
+                  note: `Ditolak: ${cleanReason}`,
+                  by: currentUser.name
+                }
+              ]
+            };
+          }
+          return r;
+        }));
+
+        // Add to audit logs
+        const newAudit = {
+          id: `aud-${Date.now()}`,
+          audit_code: `AUD-2026-${String(auditLogs.length + 8815).padStart(4, '0')}`,
+          actor_name: currentUser.name,
+          actor_role: currentUser.role,
+          action: 'REJECT_REPORT',
+          entity_id: rejectModalReport.id,
+          timestamp: '14 Mei 2026, 19:15:00 WIB',
+          hash: Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join(''),
+          metadata: {
+            report_code: rejectModalReport.report_code,
+            reason: cleanReason
+          }
+        };
+        setAuditLogs(prev => [newAudit, ...prev]);
+
+        showToast(`Laporan ${rejectModalReport.report_code} berhasil ditolak.`);
+        setRejectModalReport(null);
+        setRejectReasonText('');
+      };
+
+      // Reset Demo Data
+      const handleResetDemoData = () => {
+        if (confirm('Apakah Anda ingin mereset seluruh data kembali ke setelan bawaan demo SMARTROAD?')) {
+          localStorage.clear();
+          setReports(INITIAL_REPORTS);
+          setRoads(INITIAL_ROADS);
+          setUsers(INITIAL_USERS);
+          setAuditLogs(INITIAL_AUDIT_LOGS);
+          const { password, ...safeBudi } = INITIAL_USERS[0];
+          setCurrentUser(safeBudi);
+          showToast('Data demo berhasil direset ke kondisi awal.');
+        }
+      };
+
+      // RENDER AUTH PORTAL IF NOT AUTHENTICATED
+      if (!isAuthenticated) {
+        return (
+          <AuthPortalView 
+            onLoginSuccess={(safeUser) => {
+              setCurrentUser(safeUser);
+              setIsAuthenticated(true);
+              setActiveTab('dashboard');
+              showToast(`Selamat datang, ${safeUser.name}!`);
+            }}
+            onRegisterSuccess={(newUser, safeUser) => {
+              setUsers(prev => [newUser, ...prev]);
+              setCurrentUser(safeUser);
+              setIsAuthenticated(true);
+              setActiveTab('dashboard');
+              showToast(`Registrasi sukses! Selamat datang, ${safeUser.name}!`);
+            }}
+            users={users}
+          />
+        );
+      }
+
+      // RENDER MAIN APPLICATION IF AUTHENTICATED
+      return (
+        <div className="min-h-screen flex flex-col bg-surface">
+          {/* TOP BAR / HEADER (64px, Backdrop Blur) */}
+          <header className="h-16 fixed top-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-b border-surface-container flex items-center justify-between px-4 lg:px-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              {/* Hamburger Menu Button for Mobile */}
+              <button 
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="block lg:hidden p-2 rounded-xl text-primary hover:bg-surface-container focus:outline-hidden"
+                aria-label="Toggle Navigation Menu"
+              >
+                <i data-lucide={isMobileMenuOpen ? "x" : "menu"} className="w-6 h-6"></i>
+              </button>
+
+              {/* Dual Branding Logos */}
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="h-9 w-9 lg:h-10 lg:w-10 rounded-lg overflow-hidden flex items-center justify-center bg-surface-container shadow-xs">
+                  <img 
+                    src="public/assets/logo-pemprov-lampung.jpg" 
+                    alt="Logo Pemprov Lampung" 
+                    className="h-8 lg:h-9 w-auto object-contain"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.parentElement.innerHTML = '<span class="text-[10px] font-bold text-primary">LAMPUNG</span>';
+                    }}
+                  />
+                </div>
+                <div className="h-9 w-9 lg:h-10 lg:w-10 rounded-lg overflow-hidden flex items-center justify-center bg-surface-container shadow-xs">
+                  <img 
+                    src="public/assets/logo-teknokrat.jpg" 
+                    alt="Logo Teknokrat" 
+                    className="h-8 lg:h-9 w-auto object-contain"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.parentElement.innerHTML = '<span class="text-[10px] font-bold text-red-600">UTI</span>';
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="border-l border-slate-300 pl-2.5 hidden sm:block">
+                <h1 className="font-heading font-extrabold text-primary text-base lg:text-lg tracking-tight flex items-center gap-2">
+                  SMARTROAD
+                  <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-secondary-fixed text-secondary">PROV. LAMPUNG</span>
+                </h1>
+                <p className="text-[11px] text-on-surface-variant font-medium">Pantau Jalan, Bangun Kenyamanan</p>
+              </div>
+            </div>
+
+            {/* Middle: System Date & Live GIS Signal */}
+            <div className="hidden xl:flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-surface-container text-on-surface">
+                <i data-lucide="calendar" className="w-3.5 h-3.5 text-secondary"></i>
+                {APP_DATE}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                GIS Server 15 Kab/Kota Aktif
+              </span>
+            </div>
+
+            {/* Right: Quick Role Switcher, Profile & Logout */}
+            <div className="flex items-center gap-2 lg:gap-3">
+              <div className="hidden sm:flex items-center bg-surface-container p-1 rounded-xl text-xs font-semibold">
+                <span className="text-[11px] text-on-surface-variant px-2 font-medium">Peran:</span>
+                {['Masyarakat', 'Petugas', 'Admin'].map(role => (
+                  <button
+                    key={role}
+                    onClick={() => handleRoleChange(role)}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      currentUser.role === role
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-on-surface-variant hover:text-primary'
+                    }`}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+
+              {/* User Avatar */}
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                <div className="w-9 h-9 rounded-full bg-secondary-fixed text-secondary flex items-center justify-center font-bold text-sm shadow-xs">
+                  {currentUser.name.charAt(0)}
+                </div>
+                <div className="hidden md:block text-left">
+                  <div className="text-xs font-bold text-on-surface leading-tight">{currentUser.name}</div>
+                  <div className="text-[11px] text-on-surface-variant">{currentUser.role}</div>
+                </div>
+              </div>
+
+              {/* Top Bar Logout Button */}
+              <button
+                onClick={() => setShowLogoutModal(true)}
+                title="Keluar dari Sistem"
+                className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-all ml-1"
+              >
+                <i data-lucide="log-out" className="w-5 h-5"></i>
+              </button>
+            </div>
+          </header>
+
+          {/* MOBILE BACKDROP OVERLAY */}
+          {isMobileMenuOpen && (
+            <div 
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/40 backdrop-blur-xs z-30 block lg:hidden"
+            ></div>
+          )}
+
+          {/* MAIN LAYOUT WITH SIDEBAR */}
+          <div className="flex pt-16 flex-1">
+            {/* RESPONSIVE SIDEBAR DRAWER */}
+            <aside className={`fixed top-16 bottom-0 left-0 z-35 ${
+              currentUser.role === 'Masyarakat' ? 'w-72' : 'w-64'
+            } bg-white border-r border-surface-container flex flex-col justify-between p-4 overflow-y-auto transition-transform duration-300 ease-in-out ${
+              isMobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'
+            }`}>
+              <div className="space-y-5">
+                {/* Active Role Card */}
+                <div className="p-3.5 rounded-xl bg-surface-container-low border border-surface-container">
+                  <div className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">Peran Terdaftar</div>
+                  <div className="font-heading font-bold text-primary text-base flex items-center justify-between mt-0.5">
+                    {currentUser.role === 'Masyarakat' ? 'Masyarakat Pelapor' : currentUser.role === 'Petugas' ? 'Petugas Lapangan UPTD' : 'Admin Pemda Lampung'}
+                    <span className="h-2 w-2 rounded-full bg-secondary"></span>
+                  </div>
+                  {currentUser.uptd_region && (
+                    <p className="text-[11px] text-secondary font-medium mt-1">{currentUser.uptd_region}</p>
+                  )}
+                </div>
+
+                {/* Navigation Links per Role */}
+                <nav className="space-y-1">
+                  {currentUser.role === 'Masyarakat' && (
+                    <>
+                      <SidebarItem active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} icon="layout-dashboard" label="Beranda Warga" />
+                      <SidebarItem active={activeTab === 'buat-laporan'} onClick={() => { setActiveTab('buat-laporan'); setIsMobileMenuOpen(false); }} icon="plus-circle" label="Buat Laporan Baru" badge="Penting" />
+                      <SidebarItem active={activeTab === 'laporan-saya'} onClick={() => { setActiveTab('laporan-saya'); setIsMobileMenuOpen(false); }} icon="clipboard-list" label="Laporan Saya" badge={reports.filter(r => r.reporter_name === currentUser.name).length} />
+                      <SidebarItem active={activeTab === 'peta-publik'} onClick={() => { setActiveTab('peta-publik'); setIsMobileMenuOpen(false); }} icon="map-pin" label="Peta Kerusakan Jalan" />
+                      <SidebarItem active={activeTab === 'profil'} onClick={() => { setActiveTab('profil'); setIsMobileMenuOpen(false); }} icon="user" label="Profil & Keamanan" />
+                    </>
+                  )}
+
+                  {currentUser.role === 'Petugas' && (
+                    <>
+                      <SidebarItem active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} icon="gauge" label="Dashboard Petugas" />
+                      <SidebarItem active={activeTab === 'antrean-laporan'} onClick={() => { setActiveTab('antrean-laporan'); setIsMobileMenuOpen(false); }} icon="inbox" label="Laporan Masuk" badge={reports.filter(r => r.status === 'Menunggu Validasi').length} />
+                      <SidebarItem active={activeTab === 'spk-penanganan'} onClick={() => { setActiveTab('spk-penanganan'); setIsMobileMenuOpen(false); }} icon="hard-hat" label="Penanganan (SPK)" />
+                      <SidebarItem active={activeTab === 'peta-petugas'} onClick={() => { setActiveTab('peta-petugas'); setIsMobileMenuOpen(false); }} icon="map" label="Peta Monitoring GIS" />
+                      <SidebarItem active={activeTab === 'kinerja'} onClick={() => { setActiveTab('kinerja'); setIsMobileMenuOpen(false); }} icon="award" label="Log Kinerja & PHO" />
+                    </>
+                  )}
+
+                  {currentUser.role === 'Admin' && (
+                    <>
+                      <SidebarItem active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }} icon="bar-chart-3" label="Command Center" />
+                      <SidebarItem active={activeTab === 'semua-laporan'} onClick={() => { setActiveTab('semua-laporan'); setIsMobileMenuOpen(false); }} icon="file-text" label="Kelola Seluruh Laporan" badge={reports.length} />
+                      <SidebarItem active={activeTab === 'ruas-jalan'} onClick={() => { setActiveTab('ruas-jalan'); setIsMobileMenuOpen(false); }} icon="git-commit" label="Data Ruas Jalan (KDJ)" />
+                      <SidebarItem active={activeTab === 'manajemen-user'} onClick={() => { setActiveTab('manajemen-user'); setIsMobileMenuOpen(false); }} icon="users" label="Manajemen Pengguna" />
+                      <SidebarItem active={activeTab === 'audit-log'} onClick={() => { setActiveTab('audit-log'); setIsMobileMenuOpen(false); }} icon="shield-check" label="Audit Trail & JSON" />
+                    </>
+                  )}
+                </nav>
+              </div>
+
+              {/* Sidebar Footer with Logout & Reset Demo */}
+              <div className="pt-4 border-t border-surface-container space-y-3">
+                <button
+                  onClick={() => setShowLogoutModal(true)}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 transition-all"
+                >
+                  <i data-lucide="log-out" className="w-4 h-4"></i>
+                  Keluar dari Sesi
+                </button>
+
+                <div className="flex items-center justify-between text-[11px] text-on-surface-variant pt-1">
+                  <span>Data Demo LocalStorage:</span>
+                  <button 
+                    onClick={handleResetDemoData}
+                    className="font-semibold text-secondary hover:underline"
+                  >
+                    Reset Data
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            {/* MAIN CONTENT AREA */}
+            <main className={`flex-1 w-full ml-0 ${
+              currentUser.role === 'Masyarakat' ? 'lg:ml-72' : 'lg:ml-64'
+            } p-4 sm:p-6 lg:p-8 pb-20 min-h-[calc(100vh-4rem)] overflow-x-hidden`}>
+              {currentUser.role === 'Masyarakat' && (
+                <>
+                  {activeTab === 'dashboard' && <CitizenDashboard onNavigate={setActiveTab} reports={reports} />}
+                  {activeTab === 'buat-laporan' && (
+                    <CreateReportStepper 
+                      onSuccess={(newReport) => {
+                        setReports(prev => [newReport, ...prev]);
+
+                        // Add to Audit Logs
+                        const newAudit = {
+                          id: `aud-${Date.now()}`,
+                          audit_code: `AUD-2026-${String(auditLogs.length + 8815).padStart(4, '0')}`,
+                          actor_name: currentUser.name,
+                          actor_role: currentUser.role,
+                          action: 'CREATE_REPORT',
+                          entity_id: newReport.id,
+                          timestamp: '14 Mei 2026, 19:40:00 WIB',
+                          hash: Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join(''),
+                          metadata: {
+                            report_code: newReport.report_code,
+                            title: newReport.title,
+                            severity: newReport.severity,
+                            district: newReport.district
+                          }
+                        };
+                        setAuditLogs(prev => [newAudit, ...prev]);
+
+                        showToast(`Laporan ${newReport.report_code} berhasil diajukan!`);
+                        setActiveTab('laporan-saya');
+                      }} 
+                      onCancel={() => setActiveTab('dashboard')}
+                      currentUser={currentUser}
+                    />
+                  )}
+                  {activeTab === 'laporan-saya' && <CitizenMyReports reports={reports} onSelectReport={setSelectedReport} currentUser={currentUser} />}
+                  {activeTab === 'peta-publik' && <PublicMap reports={reports} onSelectReport={setSelectedReport} />}
+                  {activeTab === 'profil' && <CitizenProfile currentUser={currentUser} onLogoutClick={() => setShowLogoutModal(true)} />}
+                </>
+              )}
+
+              {currentUser.role === 'Petugas' && (
+                <>
+                  {activeTab === 'dashboard' && (
+                    <OfficerDashboard 
+                      reports={reports} 
+                      onSelectReport={setSelectedReport} 
+                      onNavigate={setActiveTab}
+                    />
+                  )}
+                  {activeTab === 'antrean-laporan' && (
+                    <OfficerQueue 
+                      reports={reports} 
+                      onSelectReport={setSelectedReport} 
+                      onRejectClick={(r) => setRejectModalReport(r)}
+                    />
+                  )}
+                  {activeTab === 'spk-penanganan' && (
+                    <OfficerSPKView 
+                      reports={reports} 
+                      onUpdateProgress={(reportId, progress, notes, pho) => {
+                        setReports(prev => prev.map(r => {
+                          if (r.id === reportId) {
+                            return {
+                              ...r,
+                              status: pho ? 'Selesai' : 'Dalam Perbaikan',
+                              work_update: {
+                                ...r.work_update,
+                                progress,
+                                notes: escapeHtml(notes),
+                                pho_issued: pho
+                              },
+                              histories: [
+                                ...r.histories,
+                                {
+                                  status: pho ? 'Selesai' : 'Dalam Perbaikan',
+                                  time: '14 Mei 2026 19:30',
+                                  note: pho ? 'Pekerjaan dinyatakan tuntas 100% dan PHO diterbitkan.' : `Progres pekerjaan diupdate menjadi ${progress}%`,
+                                  by: currentUser.name
+                                }
+                              ]
+                            };
+                          }
+                          return r;
+                        }));
+                        showToast(pho ? 'Dokumen PHO berhasil disahkan!' : 'Progres SPK berhasil diperbarui.');
+                      }}
+                    />
+                  )}
+                  {activeTab === 'peta-petugas' && <PublicMap reports={reports} onSelectReport={setSelectedReport} />}
+                  {activeTab === 'kinerja' && <OfficerPerformance currentUser={currentUser} reports={reports} onLogoutClick={() => setShowLogoutModal(true)} />}
+                </>
+              )}
+
+              {currentUser.role === 'Admin' && (
+                <>
+                  {activeTab === 'dashboard' && (
+                    <AdminCommandCenter 
+                      reports={reports} 
+                      roads={roads} 
+                      onSelectReport={setSelectedReport} 
+                    />
+                  )}
+                  {activeTab === 'semua-laporan' && (
+                    <AdminReportManagement 
+                      reports={reports} 
+                      onSelectReport={setSelectedReport} 
+                    />
+                  )}
+                  {activeTab === 'ruas-jalan' && (
+                    <AdminRoadSegments 
+                      roads={roads} 
+                      onAddRoad={(newRd) => {
+                        setRoads(prev => [...prev, newRd]);
+                        showToast(`Ruas jalan ${newRd.code} berhasil ditambahkan!`);
+                      }} 
+                    />
+                  )}
+                  {activeTab === 'manajemen-user' && <AdminUserManagement users={users} />}
+                  {activeTab === 'audit-log' && (
+                    <AdminAuditTrail 
+                      logs={auditLogs} 
+                      onViewPayload={(log) => setAuditModalData(log)} 
+                    />
+                  )}
+                </>
+              )}
+            </main>
+          </div>
+
+          {/* GLOBAL MANDATORY FOOTER (VERBATIM ON ALL PAGES) */}
+          <footer className="fixed bottom-0 left-0 right-0 h-10 bg-primary text-white text-xs flex items-center justify-between px-4 lg:px-6 z-40 border-t border-primary-container shadow-lg">
+            <div className="flex items-center gap-2 truncate">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span className="font-semibold text-slate-200 hidden md:inline truncate">SMARTROAD PROVINSI LAMPUNG & UNIVERSITAS TEKNOKRAT INDONESIA</span>
+            </div>
+            <div className="font-mono text-slate-300 font-semibold text-[11px] sm:text-xs truncate">
+              {FOOTER_TEXT}
+            </div>
+            <div className="text-[11px] text-slate-400 hidden sm:block shrink-0">
+              Versi 1.0 (2026)
+            </div>
+          </footer>
+
+          {/* LOGOUT CONFIRMATION MODAL */}
+          {showLogoutModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+                <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4">
+                  <i data-lucide="log-out" className="w-6 h-6"></i>
+                </div>
+                <h3 className="font-heading font-extrabold text-lg text-primary text-center">Konfirmasi Keluar Sesi</h3>
+                <p className="text-xs text-on-surface-variant text-center mt-2 leading-relaxed">
+                  Apakah Anda yakin ingin keluar dari sistem SMARTROAD? Sesi Anda akan diakhiri secara aman.
+                </p>
+                <div className="flex justify-center gap-3 mt-6">
+                  <button
+                    onClick={() => setShowLogoutModal(false)}
+                    className="px-5 py-2.5 rounded-xl text-xs font-semibold text-on-surface-variant hover:bg-slate-100"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleConfirmLogout}
+                    className="px-6 py-2.5 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-md"
+                  >
+                    Ya, Keluar Sekarang
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DETAIL & TRACKING MODAL DRAWER */}
+          {selectedReport && (
+            <ReportDetailModal 
+              report={selectedReport} 
+              currentUser={currentUser}
+              onClose={() => setSelectedReport(null)}
+              onStatusUpdate={(newStatus, note) => {
+                const cleanNote = escapeHtml(note.trim());
+                setReports(prev => prev.map(r => {
+                  if (r.id === selectedReport.id) {
+                    const updated = {
+                      ...r,
+                      status: newStatus,
+                      histories: [
+                        ...r.histories,
+                        { status: newStatus, time: '14 Mei 2026 19:35', note: cleanNote, by: currentUser.name }
+                      ]
+                    };
+                    setSelectedReport(updated);
+                    return updated;
+                  }
+                  return r;
+                }));
+
+                const newAudit = {
+                  id: `aud-${Date.now()}`,
+                  audit_code: `AUD-2026-${String(auditLogs.length + 8815).padStart(4, '0')}`,
+                  actor_name: currentUser.name,
+                  actor_role: currentUser.role,
+                  action: 'UPDATE_STATUS',
+                  entity_id: selectedReport.id,
+                  timestamp: '14 Mei 2026, 19:35:00 WIB',
+                  hash: Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join(''),
+                  metadata: {
+                    report_code: selectedReport.report_code,
+                    new_status: newStatus,
+                    note: cleanNote
+                  }
+                };
+                setAuditLogs(prev => [newAudit, ...prev]);
+
+                showToast(`Status laporan diperbarui: ${newStatus}`);
+              }}
+            />
+          )}
+
+          {/* REJECT MODAL WITH MANDATORY REASON */}
+          {rejectModalReport && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+              <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-red-200">
+                <div className="flex items-center gap-3 text-red-600 mb-4">
+                  <div className="p-3 bg-red-100 rounded-xl">
+                    <i data-lucide="alert-octagon" className="w-6 h-6"></i>
+                  </div>
+                  <div>
+                    <h3 className="font-heading font-bold text-lg text-primary">Tolak Laporan Kerusakan</h3>
+                    <p className="text-xs text-on-surface-variant">Tiket: {rejectModalReport.report_code}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-on-surface-variant mb-4">
+                  Sesuai aturan bisnis PRD, penolakan laporan <strong>wajib</strong> menyertakan alasan yang jelas dan transparan kepada masyarakat pelapor.
+                </p>
+                <div className="mb-5">
+                  <label className="block text-xs font-bold text-on-surface mb-2">Alasan Penolakan (Wajib):</label>
+                  <textarea
+                    rows="4"
+                    value={rejectReasonText}
+                    onChange={(e) => setRejectReasonText(e.target.value)}
+                    placeholder="Contoh: Bukan merupakan wewenang jalan provinsi, lokasi telah dalam jadwal pemeliharaan rutin, atau foto tidak jelas..."
+                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary focus:outline-hidden"
+                  ></textarea>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => { setRejectModalReport(null); setRejectReasonText(''); }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-on-surface-variant hover:bg-slate-100"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={handleRejectSubmit}
+                    className="px-5 py-2 rounded-xl text-xs font-semibold bg-red-600 text-white hover:bg-red-700 shadow-md"
+                  >
+                    Konfirmasi Penolakan
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AUDIT LOG JSON PAYLOAD VIEWER MODAL */}
+          {auditModalData && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="bg-slate-900 rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-700 text-slate-100">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-secondary/20 text-secondary-fixed rounded-lg">
+                      <i data-lucide="code" className="w-5 h-5"></i>
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-white text-base">Audit Trail JSON Payload</h4>
+                      <p className="text-xs text-slate-400 font-mono">{auditModalData.audit_code} · {auditModalData.action}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setAuditModalData(null)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                  >
+                    <i data-lucide="x" className="w-5 h-5"></i>
+                  </button>
+                </div>
+
+                <div className="my-4">
+                  <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                    <span>Cryptographic Hash SHA-256:</span>
+                    <span className="font-mono text-[11px] text-emerald-400 bg-slate-800 px-2 py-0.5 rounded">{auditModalData.hash ? auditModalData.hash.slice(0, 24) : 'SHA256_VERIFIED'}...</span>
+                  </div>
+                  <pre className="bg-slate-950 p-4 rounded-xl text-xs font-mono text-emerald-300 overflow-x-auto max-h-80 border border-slate-800">
+                    {JSON.stringify(auditModalData, null, 2)}
+                  </pre>
+                </div>
+
+                <div className="flex justify-between items-center pt-2">
+                  <span className="text-[11px] text-slate-500">Immutable GovTech Audit Trail Ledger</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(auditModalData, null, 2));
+                      showToast('Payload JSON disalin ke clipboard!');
+                    }}
+                    className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-secondary text-white hover:bg-secondary-container"
+                  >
+                    Salin Payload JSON
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* FLOATING TOAST NOTIFICATION */}
+          {toastMessage && (
+            <div className="fixed bottom-14 right-6 z-50 bg-primary text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-secondary text-xs font-medium animate-bounce">
+              <i data-lucide="check-circle-2" className="w-4 h-4 text-emerald-400"></i>
+              {toastMessage}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // --- SEC-02 & SEC-04: AUTHENTICATION PORTAL (HARDENED VERIFICATION) ---
+
+    function AuthPortalView({ onLoginSuccess, onRegisterSuccess, users }) {
+      const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+      const [selectedRole, setSelectedRole] = useState('Masyarakat');
+
+      // Login form state
+      const [loginIdentifier, setLoginIdentifier] = useState('');
+      const [loginPassword, setLoginPassword] = useState('');
+      const [showLoginPassword, setShowLoginPassword] = useState(false);
+
+      // Register form state
+      const [regName, setRegName] = useState('');
+      const [regNik, setRegNik] = useState('');
+      const [regEmail, setRegEmail] = useState('');
+      const [regPhone, setRegPhone] = useState('');
+      const [regDistrict, setRegDistrict] = useState(LAMPUNG_DISTRICTS[0]);
+      const [regPassword, setRegPassword] = useState('');
+      const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
+      const [agreeTerms, setAgreeTerms] = useState(false);
+      const [showRegPassword, setShowRegPassword] = useState(false);
+
+      // Password strength calculator (3 segments)
+      const passwordStrength = useMemo(() => {
+        if (!regPassword) return 0;
+        let score = 0;
+        if (regPassword.length >= 6) score++;
+        if (/[A-Z]/.test(regPassword) || /[0-9]/.test(regPassword)) score++;
+        if (/[^A-Za-z0-9]/.test(regPassword) && regPassword.length >= 8) score++;
+        return score;
+      }, [regPassword]);
+
+      // SEC-04 & SEC-02: Strict Authentication & Password Checking
+      const handleLoginSubmit = (e) => {
+        e.preventDefault();
+        const cleanIdentifier = loginIdentifier.trim();
+        const cleanPassword = loginPassword.trim();
+
+        if (!cleanIdentifier || !cleanPassword) {
+          alert('Harap masukkan NIK/Email dan Kata Sandi!');
+          return;
+        }
+
+        // Strict search: Must match email/NIK AND selectedRole
+        const found = users.find(u => 
+          (u.email.toLowerCase() === cleanIdentifier.toLowerCase() || u.nik === cleanIdentifier) &&
+          u.role === selectedRole
+        );
+
+        if (!found) {
+          alert('Kredensial atau peran tidak cocok. Pastikan NIK/Email dan peran Anda sudah benar.');
+          return;
+        }
+
+        // Strict password verification (default demo password is 'smartroad2026')
+        const expectedPassword = found.password || 'smartroad2026';
+        if (cleanPassword !== expectedPassword) {
+          alert('Kata sandi yang Anda masukkan tidak valid! (Untuk akun demo gunakan "smartroad2026").');
+          return;
+        }
+
+        // SEC-05: Sanitize user object (never leak password into session/state)
+        const { password, ...safeUser } = found;
+        onLoginSuccess(safeUser);
+      };
+
+      const handleRegisterSubmit = (e) => {
+        e.preventDefault();
+        const cleanName = regName.trim();
+        const cleanEmail = regEmail.trim().toLowerCase();
+
+        if (!cleanName) {
+          alert('Nama lengkap sesuai KTP wajib diisi!');
+          return;
+        }
+        if (regNik.length !== 16 || !/^\d+$/.test(regNik)) {
+          alert('NIK harus tepat 16 digit angka!');
+          return;
+        }
+        if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+          alert('Format email tidak valid!');
+          return;
+        }
+        if (regPassword.length < 6) {
+          alert('Kata sandi minimal 6 karakter!');
+          return;
+        }
+        if (regPassword !== regPasswordConfirm) {
+          alert('Konfirmasi kata sandi tidak cocok!');
+          return;
+        }
+        if (!agreeTerms) {
+          alert('Anda harus menyetujui syarat & ketentuan pelaporan!');
+          return;
+        }
+
+        const newUser = {
+          id: `usr-${Date.now()}`,
+          name: escapeHtml(cleanName),
+          email: escapeHtml(cleanEmail),
+          role: 'Masyarakat',
+          nik: regNik,
+          phone: escapeHtml(regPhone.trim() || '+6281200000000'),
+          reputation_score: 95,
+          password: regPassword, // Stored in users array
+          is_active: true
+        };
+
+        const { password, ...safeUser } = newUser;
+        onRegisterSuccess(newUser, safeUser);
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col justify-between bg-surface">
+          <div className="flex-1 flex flex-col lg:flex-row items-stretch">
+            {/* Left Column (5 Cols): GovTech Brand & Realtime Sensor Telemetry */}
+            <div className="lg:w-5/12 bg-linear-to-br from-primary via-primary-container to-secondary p-8 lg:p-12 text-white flex flex-col justify-between relative overflow-hidden">
+              <div className="relative z-10 space-y-6">
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-12 rounded-xl overflow-hidden bg-white/10 backdrop-blur-xs p-1 flex items-center justify-center border border-white/20 shadow-md">
+                    <img 
+                      src="public/assets/logo-pemprov-lampung.jpg" 
+                      alt="Logo Pemprov Lampung" 
+                      className="h-10 w-auto object-contain"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.innerHTML = '<span class="text-xs font-bold text-white">LAMPUNG</span>';
+                      }}
+                    />
+                  </div>
+                  <div className="h-12 w-12 rounded-xl overflow-hidden bg-white/10 backdrop-blur-xs p-1 flex items-center justify-center border border-white/20 shadow-md">
+                    <img 
+                      src="public/assets/logo-teknokrat.jpg" 
+                      alt="Logo Teknokrat" 
+                      className="h-10 w-auto object-contain"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.innerHTML = '<span class="text-xs font-bold text-red-300">UTI</span>';
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/15 text-secondary-fixed border border-white/20 mb-3">
+                    <i data-lucide="shield-check" className="w-3.5 h-3.5"></i>
+                    Portal Terpadu Pengawasan Jalan Terlindungi
+                  </span>
+                  <h1 className="font-heading font-extrabold text-3xl lg:text-4xl tracking-tight leading-tight">
+                    SMARTROAD PROVINSI LAMPUNG
+                  </h1>
+                  <p className="text-slate-200 text-sm mt-3 leading-relaxed">
+                    Sistem pemantauan, verifikasi lapangan, dan penerbitan Surat Perintah Kerja (SPK) terintegrasi berbasis GIS & AI Vision.
+                  </p>
+                </div>
+
+                <div className="p-5 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-medium">Koridor Utama:</span>
+                    <span className="font-mono text-emerald-300 font-bold">Bakauheni – Itera – Mesuji</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 pt-1 text-center">
+                    <div className="p-3 bg-white/10 rounded-xl">
+                      <div className="text-[11px] text-slate-300">Indeks Kemantapan:</div>
+                      <div className="font-heading font-extrabold text-xl text-white mt-0.5">92.8%</div>
+                    </div>
+                    <div className="p-3 bg-white/10 rounded-xl">
+                      <div className="text-[11px] text-slate-300">Rerata Nilai IRI:</div>
+                      <div className="font-heading font-extrabold text-xl text-emerald-300 mt-0.5">3.4 Mantap</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                    <div className="font-bold text-white">15 Wilayah</div>
+                    <div className="text-[10px] text-slate-300">Kabupaten/Kota</div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                    <div className="font-bold text-white">1×24 Jam</div>
+                    <div className="text-[10px] text-slate-300">Target Respon SLA</div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+                    <div className="font-bold text-white">Kolaborasi</div>
+                    <div className="text-[10px] text-slate-300">UTI & Pemprov</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-6 mt-6 border-t border-white/15 text-[11px] text-slate-300 relative z-10">
+                Pemerintah Provinsi Lampung — Dinas Bina Marga & Bina Konstruksi
+              </div>
+            </div>
+
+            {/* Right Column (7 Cols): Login & Register Tabs */}
+            <div className="lg:w-7/12 p-6 lg:p-12 flex flex-col justify-center max-w-2xl mx-auto w-full">
+              <div className="flex border-b border-surface-container mb-6">
+                <button
+                  type="button"
+                  onClick={() => setAuthMode('login')}
+                  className={`pb-3 px-6 text-sm font-heading font-bold border-b-2 transition-all ${
+                    authMode === 'login'
+                      ? 'border-secondary text-secondary'
+                      : 'border-transparent text-on-surface-variant hover:text-primary'
+                  }`}
+                >
+                  Masuk ke Sistem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuthMode('register')}
+                  className={`pb-3 px-6 text-sm font-heading font-bold border-b-2 transition-all ${
+                    authMode === 'register'
+                      ? 'border-secondary text-secondary'
+                      : 'border-transparent text-on-surface-variant hover:text-primary'
+                  }`}
+                >
+                  Pendaftaran Masyarakat Baru
+                </button>
+              </div>
+
+              {/* VIEW: LOGIN FORM */}
+              {authMode === 'login' && (
+                <div className="space-y-6">
+                  <div>
+                    <h2 className="font-heading font-extrabold text-2xl text-primary">Selamat Datang di SMARTROAD</h2>
+                    <p className="text-xs text-on-surface-variant mt-1">
+                      Pilih peran pengguna dan masukkan kredensial untuk mengakses dashboard pengawasan.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-on-surface-variant mb-2">Pilih Peran Akun:</label>
+                    <div className="grid grid-cols-3 gap-2 p-1 bg-surface-container rounded-2xl text-xs font-semibold">
+                      {['Masyarakat', 'Petugas', 'Admin'].map(r => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setSelectedRole(r)}
+                          className={`py-2 rounded-xl transition-all ${
+                            selectedRole === r
+                              ? 'bg-primary text-white shadow-sm'
+                              : 'text-on-surface-variant hover:text-primary'
+                          }`}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleLoginSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface mb-1">
+                        {selectedRole === 'Masyarakat' ? 'NIK (16 Digit) atau Alamat Email:' : selectedRole === 'Petugas' ? 'NIP / Email Kedinasan UPTD:' : 'Email Administrator Pemda:'}
+                      </label>
+                      <input 
+                        type="text" 
+                        value={loginIdentifier}
+                        onChange={(e) => setLoginIdentifier(e.target.value)}
+                        placeholder={selectedRole === 'Masyarakat' ? '1871021405920003 atau warga@smartroad...' : 'petugas@smartroad.lampungprov.go.id'}
+                        className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary focus:outline-hidden"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-bold text-on-surface">Kata Sandi:</label>
+                        <button 
+                          type="button" 
+                          onClick={() => setShowLoginPassword(!showLoginPassword)}
+                          className="text-[11px] text-secondary font-semibold hover:underline"
+                        >
+                          {showLoginPassword ? 'Sembunyikan' : 'Tampilkan'}
+                        </button>
+                      </div>
+                      <input 
+                        type={showLoginPassword ? "text" : "password"}
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary focus:outline-hidden"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3 rounded-xl text-xs font-semibold bg-primary text-white hover:bg-primary-container shadow-md transition-all flex items-center justify-center gap-2"
+                    >
+                      <i data-lucide="log-in" className="w-4 h-4"></i>
+                      Masuk sebagai {selectedRole}
+                    </button>
+                  </form>
+
+                  {/* 1-Click Instant Demo Login Access Buttons */}
+                  <div className="pt-5 border-t border-surface-container">
+                    <span className="text-[11px] font-semibold text-on-surface-variant block mb-2 text-center uppercase tracking-wider">
+                      Akses Cepat Pengujian (Demo 1-Click):
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const user = users.find(u => u.role === 'Masyarakat') || INITIAL_USERS[0];
+                          const { password, ...safeUser } = user;
+                          onLoginSuccess(safeUser);
+                        }}
+                        className="p-2.5 rounded-xl border border-slate-200 hover:border-secondary hover:bg-secondary-fixed/30 text-left transition-all"
+                      >
+                        <div className="text-[10px] text-secondary font-bold uppercase">Demo Masyarakat</div>
+                        <div className="text-xs font-bold text-primary mt-0.5">Budi Santoso</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const user = users.find(u => u.role === 'Petugas') || INITIAL_USERS[1];
+                          const { password, ...safeUser } = user;
+                          onLoginSuccess(safeUser);
+                        }}
+                        className="p-2.5 rounded-xl border border-slate-200 hover:border-secondary hover:bg-secondary-fixed/30 text-left transition-all"
+                      >
+                        <div className="text-[10px] text-secondary font-bold uppercase">Demo Petugas</div>
+                        <div className="text-xs font-bold text-primary mt-0.5">Ir. Hendrawan</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const user = users.find(u => u.role === 'Admin') || INITIAL_USERS[2];
+                          const { password, ...safeUser } = user;
+                          onLoginSuccess(safeUser);
+                        }}
+                        className="p-2.5 rounded-xl border border-slate-200 hover:border-secondary hover:bg-secondary-fixed/30 text-left transition-all"
+                      >
+                        <div className="text-[10px] text-secondary font-bold uppercase">Demo Admin</div>
+                        <div className="text-xs font-bold text-primary mt-0.5">Dinas BMBK</div>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* VIEW: REGISTER FORM (MASYARAKAT) */}
+              {authMode === 'register' && (
+                <div className="space-y-5">
+                  <div>
+                    <h2 className="font-heading font-extrabold text-2xl text-primary">Daftar Akun Masyarakat</h2>
+                    <p className="text-xs text-on-surface-variant mt-1">
+                      Daftarkan identitas Anda untuk menyampaikan laporan dan melacak status perbaikan jalan.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleRegisterSubmit} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">Nama Lengkap (Sesuai KTP):</label>
+                        <input 
+                          type="text"
+                          value={regName}
+                          onChange={(e) => setRegName(e.target.value)}
+                          placeholder="Contoh: Budi Santoso"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                        />
+                      </div>
+
+                      {/* NIK with 16-Digit Counter & Numeric Enforcement */}
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-xs font-bold text-on-surface">NIK (16 Digit):</label>
+                          <span className={`text-[10px] font-mono font-bold ${
+                            regNik.length === 16 ? 'text-emerald-600' : 'text-amber-600'
+                          }`}>
+                            {regNik.length}/16 Digit
+                          </span>
+                        </div>
+                        <input 
+                          type="text"
+                          maxLength={16}
+                          value={regNik}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setRegNik(val);
+                          }}
+                          placeholder="1871021405920003"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 font-mono focus:ring-2 focus:ring-secondary"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">Email Aktif:</label>
+                        <input 
+                          type="email"
+                          value={regEmail}
+                          onChange={(e) => setRegEmail(e.target.value)}
+                          placeholder="nama@email.com"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">Nomor WhatsApp Aktif:</label>
+                        <input 
+                          type="tel"
+                          value={regPhone}
+                          onChange={(e) => setRegPhone(e.target.value)}
+                          placeholder="+6281273948123"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-on-surface mb-1">Kabupaten / Kota Domisili:</label>
+                      <select 
+                        value={regDistrict}
+                        onChange={(e) => setRegDistrict(e.target.value)}
+                        className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                      >
+                        {LAMPUNG_DISTRICTS.map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Password & Strength Meter */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">Kata Sandi Baru:</label>
+                        <input 
+                          type={showRegPassword ? "text" : "password"}
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          placeholder="Minimal 6 karakter"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                        />
+                        <div className="mt-2">
+                          <div className="flex gap-1.5 h-1.5">
+                            <div className={`flex-1 rounded-full ${
+                              passwordStrength >= 1 ? 'bg-amber-500' : 'bg-slate-200'
+                            }`}></div>
+                            <div className={`flex-1 rounded-full ${
+                              passwordStrength >= 2 ? 'bg-blue-500' : 'bg-slate-200'
+                            }`}></div>
+                            <div className={`flex-1 rounded-full ${
+                              passwordStrength >= 3 ? 'bg-emerald-500' : 'bg-slate-200'
+                            }`}></div>
+                          </div>
+                          <span className="text-[10px] text-on-surface-variant mt-1 block">
+                            Kekuatan: {passwordStrength === 0 ? 'Belum Diisi' : passwordStrength === 1 ? 'Lemah' : passwordStrength === 2 ? 'Sedang' : 'Sangat Kuat'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">Konfirmasi Kata Sandi:</label>
+                        <input 
+                          type={showRegPassword ? "text" : "password"}
+                          value={regPasswordConfirm}
+                          onChange={(e) => setRegPasswordConfirm(e.target.value)}
+                          placeholder="Ulangi kata sandi"
+                          className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                        />
+                        {regPasswordConfirm && (
+                          <span className={`text-[10px] font-semibold mt-1 block ${
+                            regPassword === regPasswordConfirm ? 'text-emerald-600' : 'text-rose-600'
+                          }`}>
+                            {regPassword === regPasswordConfirm ? '✓ Kata sandi cocok' : '✗ Kata sandi tidak cocok'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2 pt-1">
+                      <input 
+                        type="checkbox"
+                        id="agreeTerms"
+                        checked={agreeTerms}
+                        onChange={(e) => setAgreeTerms(e.target.checked)}
+                        className="mt-0.5 rounded text-secondary focus:ring-secondary"
+                      />
+                      <label htmlFor="agreeTerms" className="text-xs text-on-surface-variant leading-relaxed">
+                        Saya menyatakan data identitas di atas adalah benar dan menyetujui seluruh ketentuan partisipasi pelaporan infrastruktur SMARTROAD Provinsi Lampung.
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="w-full py-3 rounded-xl text-xs font-semibold bg-primary text-white hover:bg-primary-container shadow-md transition-all flex items-center justify-center gap-2"
+                    >
+                      <i data-lucide="user-plus" className="w-4 h-4"></i>
+                      Daftar dan Masuk ke Dashboard
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <footer className="h-10 bg-primary text-white text-xs flex items-center justify-between px-6 border-t border-primary-container">
+            <span className="text-slate-300 text-[11px] font-semibold">SMARTROAD PROV. LAMPUNG & TEKNOKRAT</span>
+            <span className="font-mono text-slate-300 text-[11px] font-semibold">{FOOTER_TEXT}</span>
+            <span className="text-slate-400 text-[11px]">2026</span>
+          </footer>
+        </div>
+      );
+    }
+
+    // --- REUSABLE COMPONENTS ---
+
+    function SidebarItem({ active, onClick, icon, label, badge }) {
+      return (
+        <button
+          onClick={onClick}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+            active 
+              ? 'bg-primary text-white shadow-sm' 
+              : 'text-on-surface-variant hover:bg-surface-container hover:text-primary'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <i data-lucide={icon} className={`w-4 h-4 ${active ? 'text-secondary-fixed' : 'text-on-surface-variant'}`}></i>
+            <span>{label}</span>
+          </div>
+          {badge !== undefined && (
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+              active ? 'bg-secondary text-white' : 'bg-surface-container-high text-primary'
+            }`}>
+              {badge}
+            </span>
+          )}
+        </button>
+      );
+    }
+
+    function KPICard({ label, value, subtext, icon, trend, color = 'primary' }) {
+      return (
+        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-surface-container shadow-xs hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-2 sm:mb-3">
+            <span className="text-[11px] sm:text-xs font-semibold text-on-surface-variant uppercase tracking-wider">{label}</span>
+            <div className={`p-2.5 rounded-xl bg-surface-container text-${color}`}>
+              <i data-lucide={icon} className="w-4 h-4 sm:w-5 sm:h-5"></i>
+            </div>
+          </div>
+          <div className="font-heading font-extrabold text-xl sm:text-2xl text-primary">{value}</div>
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] sm:text-xs text-on-surface-variant">
+            {trend && <span className="font-bold text-emerald-600">{trend}</span>}
+            <span>{subtext}</span>
+          </div>
+        </div>
+      );
+    }
+
+    // --- CITIZEN COMPONENTS ---
+
+    function CitizenDashboard({ onNavigate, reports }) {
+      const myReports = reports.filter(r => r.reporter_name === 'Budi Santoso');
+      return (
+        <div className="space-y-6">
+          <div className="p-6 sm:p-8 rounded-3xl bg-linear-to-r from-primary to-primary-container text-white shadow-lg relative overflow-hidden">
+            <div className="max-w-2xl relative z-10">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-secondary-fixed text-primary mb-3">
+                <i data-lucide="shield-check" className="w-3.5 h-3.5"></i>
+                Portal Pengaduan Resmi Provinsi Lampung
+              </span>
+              <h2 className="font-heading font-extrabold text-2xl sm:text-3xl tracking-tight mb-2">
+                Laporkan Jalan Rusak, Awasi Penanganannya Hingga Tuntas.
+              </h2>
+              <p className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-6">
+                Setiap laporan masyarakat diverifikasi maksimal 1×24 jam oleh UPTD Dinas BMBK. Foto ber-geotag memastikan perbaikan tepat sasaran.
+              </p>
+              <div className="flex flex-wrap gap-3 sm:gap-4">
+                <button
+                  onClick={() => onNavigate('buat-laporan')}
+                  className="px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl bg-secondary text-white font-semibold text-xs flex items-center gap-2 hover:bg-secondary-container shadow-md transition-all"
+                >
+                  <i data-lucide="plus-circle" className="w-4 h-4"></i>
+                  Laporkan Kerusakan Jalan Sekarang
+                </button>
+                <button
+                  onClick={() => onNavigate('peta-publik')}
+                  className="px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl bg-white/10 text-white font-semibold text-xs flex items-center gap-2 hover:bg-white/20 backdrop-blur-xs transition-all"
+                >
+                  <i data-lucide="map" className="w-4 h-4"></i>
+                  Lihat Peta Kerusakan Publik
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <KPICard label="Total Laporan Anda" value={myReports.length} subtext="Laporan terdaftar" icon="file-text" />
+            <KPICard label="Menunggu Validasi" value={myReports.filter(r => r.status === 'Menunggu Validasi').length} subtext="Antrean inspeksi teknis" icon="clock" color="amber-500" />
+            <KPICard label="Sedang Dikerjakan" value={myReports.filter(r => r.status === 'Dalam Perbaikan').length} subtext="Pekerjaan fisik UPTD" icon="hard-hat" color="purple-600" />
+            <KPICard label="Tuntas & Mantap" value={myReports.filter(r => r.status === 'Selesai').length} subtext="Telah diserahterimakan (PHO)" icon="check-circle-2" color="emerald-600" />
+          </div>
+
+          <div className="p-6 rounded-2xl bg-white border border-surface-container">
+            <h3 className="font-heading font-bold text-base text-primary mb-4">4 Langkah Mudah Melaporkan Jalan Rusak</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { step: '01', title: 'Ambil Foto Kerusakan', desc: 'Foto lubang/retak jalan di lokasi agar koordinat GPS terekam otomatis.' },
+                { step: '02', title: 'Tentukan Titik Peta', desc: 'Tandai titik presisi pada peta digital SMARTROAD Provinsi Lampung.' },
+                { step: '03', title: 'Verifikasi Petugas', desc: 'Petugas UPTD survei lapangan dan menerbitkan Surat Perintah Kerja (SPK).' },
+                { step: '04', title: 'Pantau Real-Time', desc: 'Saksikan foto sebelum dan sesudah perbaikan langsung di aplikasi.' },
+              ].map(s => (
+                <div key={s.step} className="p-4 rounded-xl bg-surface-container-low border border-surface-container">
+                  <div className="font-heading font-extrabold text-secondary text-xl mb-1">{s.step}</div>
+                  <h4 className="font-bold text-xs text-primary mb-1">{s.title}</h4>
+                  <p className="text-[11px] text-on-surface-variant leading-relaxed">{s.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // STEPPER FORM WITH MAGIC BYTES VERIFICATION & INPUT SANITIZATION (SEC-07 & SEC-XSS)
+    function CreateReportStepper({ onSuccess, onCancel, currentUser }) {
+      const [step, setStep] = useState(1);
+      const [title, setTitle] = useState('');
+      const [category, setCategory] = useState('cat-1');
+      const [severity, setSeverity] = useState('Sedang');
+      const [desc, setDesc] = useState('');
+      const [district, setDistrict] = useState(LAMPUNG_DISTRICTS[0]);
+      const [address, setAddress] = useState('Jl. ZA Pagar Alam No. 9, Kedaton');
+      const [lat, setLat] = useState(-5.381423);
+      const [lng, setLng] = useState(105.257122);
+
+      // Photo upload state
+      const [photoUrl, setPhotoUrl] = useState('https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&w=800&q=80');
+      const [uploadedFileName, setUploadedFileName] = useState('pothole_sample_01.jpg');
+      const [uploadedFileSize, setUploadedFileSize] = useState('2.4 MB');
+      const fileInputRef = useRef(null);
+
+      // SEC-07: Validasi berkas biner (Magic Bytes) dan sanitasi nama berkas
+      const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // 1. Validasi ukuran berkas (maksimal 5 MB)
+        const maxSize = 5 * 1024 * 1024;
+        if (file.size > maxSize) {
+          alert('Ukuran file terlalu besar! Ukuran file maksimal adalah 5 MB.');
+          e.target.value = '';
+          return;
+        }
+
+        // 2. Sanitasi nama berkas agar bebas dari path traversal dan karakter berbahaya
+        const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+        // 3. Verifikasi tanda biner berkas asli (Magic Bytes Verification)
+        const bufferReader = new FileReader();
+        bufferReader.onloadend = (evt) => {
+          if (!evt.target.result) return;
+          const arr = new Uint8Array(evt.target.result).subarray(0, 4);
+          let header = '';
+          for (let i = 0; i < arr.length; i++) {
+            header += arr[i].toString(16).padStart(2, '0').toUpperCase();
+          }
+
+          // Validasi header biner:
+          // JPEG: FFD8FF
+          // PNG: 89504E47
+          // WEBP: 52494646 (RIFF header)
+          const isJPEG = header.startsWith('FFD8FF');
+          const isPNG = header.startsWith('89504E47');
+          const isWEBP = header.startsWith('52494646');
+
+          if (!isJPEG && !isPNG && !isWEBP) {
+            alert('Keamanan Terpicu: Berkas terdeteksi bukan berkas gambar valid (Magic Bytes Signature tidak cocok). Hanya format JPG, PNG, atau WEBP asli yang diizinkan!');
+            e.target.value = '';
+            return;
+          }
+
+          // Berkas gambar terverifikasi aman: Baca ke Base64 Data URL untuk pratinjau
+          const dataUrlReader = new FileReader();
+          dataUrlReader.onload = (event) => {
+            setPhotoUrl(event.target.result);
+            setUploadedFileName(cleanName);
+            setUploadedFileSize(`${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+          };
+          dataUrlReader.readAsDataURL(file);
+        };
+        bufferReader.readAsArrayBuffer(file.slice(0, 8));
+      };
+
+      // Inisialisasi Peta Leaflet pada langkah 2
+      useEffect(() => {
+        if (step === 2) {
+          const mapEl = document.getElementById('report-picker-map');
+          if (mapEl && !mapEl._leaflet_id) {
+            const map = L.map('report-picker-map').setView([lat, lng], 14);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+
+            let marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+            marker.on('dragend', function(e) {
+              const pos = marker.getLatLng();
+              setLat(Number(pos.lat.toFixed(6)));
+              setLng(Number(pos.lng.toFixed(6)));
+            });
+
+            map.on('click', function(e) {
+              marker.setLatLng(e.latlng);
+              setLat(Number(e.latlng.lat.toFixed(6)));
+              setLng(Number(e.latlng.lng.toFixed(6)));
+            });
+          }
+        }
+      }, [step]);
+
+      const handleSubmit = () => {
+        // SEC-XSS: Sanitasi teks input sebelum penyimpanan
+        const cleanTitle = escapeHtml(title.trim());
+        const cleanDesc = escapeHtml(desc.trim());
+        const cleanAddress = escapeHtml(address.trim());
+
+        if (!cleanTitle || !cleanDesc) {
+          alert('Judul dan deskripsi laporan wajib diisi!');
+          return;
+        }
+
+        const catObj = CATEGORIES.find(c => c.id === category);
+        const newReport = {
+          id: `rpt-${Date.now()}`,
+          report_code: `#RPT-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+          reporter_name: currentUser.name,
+          reporter_nik_masked: currentUser.nik ? `${currentUser.nik.slice(0, 6)}********${currentUser.nik.slice(-2)}` : '187102********91',
+          reporter_reputation: currentUser.reputation_score || 96,
+          road_name: 'Ruas Jalan Provinsi Terverifikasi',
+          district: district,
+          subdistrict: 'Kecamatan Terdata',
+          category_name: catObj ? catObj.name : 'Jalan Berlubang',
+          title: cleanTitle,
+          description: cleanDesc,
+          severity: severity,
+          latitude: lat,
+          longitude: lng,
+          address: cleanAddress,
+          status: 'Menunggu Validasi',
+          ai_urgency_score: severity === 'Berat' ? 8.9 : severity === 'Sedang' ? 6.5 : 4.0,
+          sla_seconds_left: 86400, // 24 hours
+          created_at: '14 Mei 2026, 19:40 WIB',
+          photos: {
+            before: photoUrl,
+            in_progress: null,
+            after: null
+          },
+          histories: [
+            {
+              status: 'Menunggu Validasi',
+              time: '14 Mei 2026 19:40',
+              note: 'Laporan baru dibuat dan masuk antrean verifikasi teknis UPTD.',
+              by: currentUser.name
+            }
+          ]
+        };
+
+        onSuccess(newReport);
+      };
+
+      return (
+        <div className="max-w-4xl mx-auto p-5 sm:p-8 rounded-3xl bg-white border border-surface-container shadow-lg">
+          <div className="flex items-center justify-between pb-6 mb-6 border-b border-surface-container">
+            <div>
+              <h2 className="font-heading font-extrabold text-lg sm:text-xl text-primary">Formulir Laporan Kerusakan Jalan</h2>
+              <p className="text-xs text-on-surface-variant">Lengkapi data agar petugas UPTD dapat melakukan penanganan presisi</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4].map(s => (
+                <div 
+                  key={s} 
+                  className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-bold text-xs ${
+                    step === s ? 'bg-primary text-white ring-4 ring-secondary-fixed' : step > s ? 'bg-secondary text-white' : 'bg-surface-container text-on-surface-variant'
+                  }`}
+                >
+                  {s}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* STEP 1: INFORMASI KERUSAKAN */}
+          {step === 1 && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Judul Laporan Kerusakan:</label>
+                <input 
+                  type="text" 
+                  value={title} 
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Contoh: Lubang Menganga di Dekat Flyover Teknokrat"
+                  className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-2">Pilih Kategori Kerusakan:</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {CATEGORIES.map(c => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setCategory(c.id)}
+                      className={`p-3 rounded-xl border text-left text-xs font-semibold flex items-center gap-2.5 transition-all ${
+                        category === c.id ? 'border-secondary bg-secondary-fixed text-primary shadow-xs' : 'border-slate-200 hover:bg-slate-50 text-on-surface'
+                      }`}
+                    >
+                      <i data-lucide={c.icon} className="w-4 h-4 text-secondary"></i>
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-2">Tingkat Keparahan:</label>
+                <div className="flex flex-wrap gap-4">
+                  {['Ringan', 'Sedang', 'Berat'].map(sev => (
+                    <label key={sev} className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                      <input 
+                        type="radio" 
+                        name="severity" 
+                        checked={severity === sev} 
+                        onChange={() => setSeverity(sev)}
+                        className="text-secondary focus:ring-secondary"
+                      />
+                      <span className={sev === 'Berat' ? 'text-red-600 font-bold' : ''}>{sev} {sev === 'Berat' && '(Membahayakan Jiwa)'}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Uraian / Deskripsi Kondisi:</label>
+                <textarea 
+                  rows="4" 
+                  value={desc} 
+                  onChange={(e) => setDesc(e.target.value)}
+                  placeholder="Ceritakan detail kerusakan jalan, perkiraan ukuran, serta dampaknya pada lalu lintas..."
+                  className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary focus:outline-hidden"
+                ></textarea>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2: LOKASI & GIS PICKER */}
+          {step === 2 && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1">Kabupaten / Kota:</label>
+                  <select 
+                    value={district} 
+                    onChange={(e) => setDistrict(e.target.value)}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                  >
+                    {LAMPUNG_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-on-surface mb-1">Alamat / Patokan Terdekat:</label>
+                  <input 
+                    type="text" 
+                    value={address} 
+                    onChange={(e) => setAddress(e.target.value)}
+                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-secondary"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
+                  <label className="text-xs font-bold text-on-surface">Tandai Lokasi Presisi di Peta (Klik atau Geser Pin):</label>
+                  <span className="text-[11px] font-mono text-secondary bg-secondary-fixed px-2 py-0.5 rounded w-fit">
+                    GPS: {lat}, {lng} (Akurasi ±4m)
+                  </span>
+                </div>
+                <div id="report-picker-map" className="h-64 w-full rounded-2xl border border-slate-300 shadow-inner"></div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3: UPLOAD FOTO DENGAN INPUT FILE ASLI & VALIDASI MAGIC BYTES */}
+          {step === 3 && (
+            <div className="space-y-4">
+              <input 
+                type="file" 
+                ref={fileInputRef}
+                accept="image/png, image/jpeg, image/jpg, image/webp"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+
+              <div 
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                className="p-6 rounded-2xl border-2 border-dashed border-secondary bg-surface-container-low text-center cursor-pointer hover:bg-secondary-fixed/20 transition-all"
+              >
+                <i data-lucide="upload-cloud" className="w-10 h-10 text-secondary mx-auto mb-2"></i>
+                <h4 className="font-bold text-xs text-primary mb-1">Pilih Foto dari Perangkat / Komputer Anda</h4>
+                <p className="text-[11px] text-on-surface-variant mb-3">
+                  Format gambar terverifikasi: JPG, JPEG, PNG, WEBP (Maksimal 5 MB)
+                </p>
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold bg-secondary text-white shadow-xs">
+                  <i data-lucide="camera" className="w-3.5 h-3.5"></i>
+                  Klik untuk Memilih File Gambar Asli
+                </div>
+              </div>
+
+              {/* Photo Preview & AI Detection Banner */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-2xl overflow-hidden border border-surface-container relative">
+                  <img src={photoUrl} alt="Foto Kerusakan" className="w-full h-48 object-cover" />
+                  <div className="absolute top-2 left-2 px-2.5 py-1 rounded-md bg-emerald-600/90 text-white font-mono text-[10px] flex items-center gap-1">
+                    <i data-lucide="check" className="w-3 h-3"></i>
+                    {uploadedFileName} ({uploadedFileSize})
+                  </div>
+                  <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded-md bg-black/70 text-white font-mono text-[10px]">
+                    LAT: {lat} | LNG: {lng}
+                  </span>
+                </div>
+                <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 text-secondary font-bold text-xs mb-2">
+                      <i data-lucide="sparkles" className="w-4 h-4"></i>
+                      Hasil Inspeksi AI Vision SMARTROAD
+                    </div>
+                    <ul className="text-xs text-on-surface-variant space-y-1.5 leading-relaxed">
+                      <li>• <strong>Deteksi:</strong> 94.2% probabilitas Pothole (Jalan Berlubang).</li>
+                      <li>• <strong>Estimasi Dimensi:</strong> Diameter ~0.8 m, Kedalaman ~12 cm.</li>
+                      <li>• <strong>Rekomendasi Penanganan:</strong> Cold Milling & Patching AC-WC.</li>
+                    </ul>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white border border-blue-100 text-[11px] text-primary font-medium mt-3">
+                    Status: Siap diverifikasi oleh Verifikator Lapangan UPTD Wilayah I.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 4: KONFIRMASI LAPORAN */}
+          {step === 4 && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-surface-container-low border border-surface-container space-y-3">
+                <h4 className="font-bold text-xs text-primary uppercase tracking-wider">Ringkasan Pengaduan</h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div><span className="text-on-surface-variant">Judul:</span> <strong className="text-primary block">{title}</strong></div>
+                  <div><span className="text-on-surface-variant">Kategori:</span> <strong className="text-primary block">{CATEGORIES.find(c => c.id === category)?.name}</strong></div>
+                  <div><span className="text-on-surface-variant">Keparahan:</span> {getSeverityBadge(severity)}</div>
+                  <div><span className="text-on-surface-variant">Kabupaten/Kota:</span> <strong className="text-primary block">{district}</strong></div>
+                  <div className="col-span-2"><span className="text-on-surface-variant">Alamat:</span> <strong className="text-primary block">{address} ({lat}, {lng})</strong></div>
+                  <div className="col-span-2"><span className="text-on-surface-variant">File Foto Terlampir:</span> <span className="font-mono text-emerald-700 font-bold block">{uploadedFileName} ({uploadedFileSize})</span></div>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                <i data-lucide="alert-circle" className="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+                <p>
+                  Dengan menekan tombol Kirim, Anda menyatakan bahwa informasi kerusakan jalan ini adalah benar dan dapat dipertanggungjawabkan untuk ditindaklanjuti oleh Pemerintah Provinsi Lampung.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Navigation Buttons */}
+          <div className="flex items-center justify-between pt-6 mt-6 border-t border-surface-container">
+            <button
+              onClick={() => step === 1 ? onCancel() : setStep(step - 1)}
+              className="px-5 py-2.5 rounded-xl text-xs font-semibold text-on-surface-variant hover:bg-slate-100"
+            >
+              {step === 1 ? 'Batal' : 'Kembali'}
+            </button>
+            <button
+              onClick={() => step === 4 ? handleSubmit() : setStep(step + 1)}
+              className="px-6 py-2.5 rounded-xl text-xs font-semibold bg-primary text-white hover:bg-primary-container shadow-md"
+            >
+              {step === 4 ? 'Kirim Laporan Sekarang' : 'Lanjutkan'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function CitizenMyReports({ reports, onSelectReport, currentUser }) {
+      const myReports = reports.filter(r => r.reporter_name === currentUser.name || r.reporter_name === 'Budi Santoso');
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Daftar Laporan Saya</h2>
+              <p className="text-xs text-on-surface-variant">Pantau status validasi dan progres fisik pengerjaan di lapangan</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">Kode Tiket</th>
+                  <th className="py-3.5 px-4">Judul & Kategori</th>
+                  <th className="py-3.5 px-4">Ruas & Wilayah</th>
+                  <th className="py-3.5 px-4">Keparahan</th>
+                  <th className="py-3.5 px-4">Status Terkini</th>
+                  <th className="py-3.5 px-4">SLA Respon</th>
+                  <th className="py-3.5 px-4 text-center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {myReports.map(r => (
+                  <tr key={r.id} className="hover:bg-surface-container-low/60 transition-colors">
+                    <td className="py-3.5 px-4 font-mono font-bold text-secondary">{r.report_code}</td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-bold text-primary">{r.title}</div>
+                      <div className="text-[11px] text-on-surface-variant">{r.category_name}</div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-medium text-on-surface">{r.road_name}</div>
+                      <div className="text-[11px] text-on-surface-variant">{r.district}</div>
+                    </td>
+                    <td className="py-3.5 px-4">{getSeverityBadge(r.severity)}</td>
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${getStatusStyle(r.status)}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-xs text-on-surface-variant">
+                      {formatSLA(r.sla_seconds_left)}
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        onClick={() => onSelectReport(r)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-primary hover:bg-secondary hover:text-white transition-all"
+                      >
+                        Lacak Detail
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // SEC-01 REMEDIATION: PETA LEAFLET BEBAS DOM XSS MENGGUNAKAN NODE TEXTCONTENT
+    function PublicMap({ reports, onSelectReport }) {
+      useEffect(() => {
+        const mapEl = document.getElementById('public-gis-map');
+        if (mapEl && !mapEl._leaflet_id) {
+          const map = L.map('public-gis-map').setView([-5.397140, 105.266792], 12);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors | SMARTROAD Lampung'
+          }).addTo(map);
+
+          reports.forEach(r => {
+            const marker = L.circleMarker([r.latitude, r.longitude], {
+              radius: 8,
+              fillColor: r.status === 'Selesai' ? '#16a34a' : r.status === 'Dalam Perbaikan' ? '#9333ea' : r.status === 'Ditolak' ? '#dc2626' : '#f97316',
+              color: '#ffffff',
+              weight: 2,
+              opacity: 1,
+              fillOpacity: 0.9
+            }).addTo(map);
+
+            // SEC-01: Buat DOM element secara aman (Immunized against XSS injection)
+            const popupNode = document.createElement('div');
+            popupNode.style.fontFamily = 'Inter, sans-serif';
+            popupNode.style.fontSize = '12px';
+            popupNode.style.width = '220px';
+
+            const codeNode = document.createElement('strong');
+            codeNode.style.color = '#002043';
+            codeNode.style.fontSize = '13px';
+            codeNode.textContent = r.report_code;
+
+            const br1 = document.createElement('br');
+
+            const titleNode = document.createElement('span');
+            titleNode.textContent = r.title; // Aman: textContent tidak pernah mengeksekusi tag HTML
+
+            const br2 = document.createElement('br');
+
+            const statusNode = document.createElement('span');
+            statusNode.style.display = 'inline-block';
+            statusNode.style.marginTop = '4px';
+            statusNode.style.padding = '2px 6px';
+            statusNode.style.background = '#e2e8f0';
+            statusNode.style.borderRadius = '4px';
+            statusNode.style.fontWeight = 'bold';
+            statusNode.textContent = r.status;
+
+            popupNode.appendChild(codeNode);
+            popupNode.appendChild(br1);
+            popupNode.appendChild(titleNode);
+            popupNode.appendChild(br2);
+            popupNode.appendChild(statusNode);
+
+            marker.bindPopup(popupNode);
+            marker.on('click', () => onSelectReport(r));
+          });
+        }
+      }, [reports]);
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Peta Spasial Kerusakan Jalan Lampung</h2>
+              <p className="text-xs text-on-surface-variant">Sebaran titik laporan masyarakat dan pemantauan penanganan fisik UPTD (Aman dari XSS)</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 bg-white px-4 py-2 rounded-xl border border-surface-container text-xs w-fit">
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500"></span> Menunggu</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-purple-600"></span> Perbaikan</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-600"></span> Selesai</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-600"></span> Ditolak</span>
+            </div>
+          </div>
+          <div id="public-gis-map" className="h-[500px] sm:h-[620px] w-full rounded-3xl border border-surface-container shadow-md"></div>
+        </div>
+      );
+    }
+
+    function CitizenProfile({ currentUser, onLogoutClick }) {
+      return (
+        <div className="max-w-2xl mx-auto space-y-6">
+          <div className="p-6 rounded-3xl bg-white border border-surface-container shadow-xs">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="w-16 h-16 rounded-2xl bg-secondary-fixed text-secondary font-bold text-2xl flex items-center justify-center">
+                {currentUser.name.charAt(0)}
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-xl text-primary">{currentUser.name}</h3>
+                <p className="text-xs text-on-surface-variant font-mono">{currentUser.email}</p>
+                <div className="inline-flex items-center gap-1 mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                  Skor Kredibilitas Pelapor: {currentUser.reputation_score || 96}%
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4 border-t border-surface-container pt-4 text-xs">
+              <div>
+                <label className="text-on-surface-variant block font-medium">Nomor Induk Kependudukan (Tersamarkan sesuai UU PDP):</label>
+                <div className="font-mono font-bold text-primary mt-1 text-sm">
+                  {currentUser.nik ? `${currentUser.nik.slice(0, 6)}********${currentUser.nik.slice(-2)}` : '187102********91'}
+                </div>
+              </div>
+              <div>
+                <label className="text-on-surface-variant block font-medium">Nomor WhatsApp Terverifikasi:</label>
+                <div className="font-mono text-primary mt-1">{currentUser.phone || '+6281273948123'}</div>
+              </div>
+              <div>
+                <label className="text-on-surface-variant block font-medium">Kekuatan Kata Sandi Akun:</label>
+                <div className="flex gap-1.5 mt-2">
+                  <div className="h-2 flex-1 rounded-full bg-emerald-500"></div>
+                  <div className="h-2 flex-1 rounded-full bg-emerald-500"></div>
+                  <div className="h-2 flex-1 rounded-full bg-emerald-500"></div>
+                </div>
+                <span className="text-[10px] text-emerald-600 font-bold block mt-1">Sangat Kuat (2FA Aktif via Dukcapil)</span>
+              </div>
+            </div>
+
+            <div className="pt-6 mt-6 border-t border-surface-container flex justify-end">
+              <button
+                onClick={onLogoutClick}
+                className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 transition-all flex items-center gap-2"
+              >
+                <i data-lucide="log-out" className="w-4 h-4"></i>
+                Keluar dari Akun
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- OFFICER (PETUGAS) COMPONENTS ---
+
+    function OfficerDashboard({ reports, onSelectReport, onNavigate }) {
+      const waiting = reports.filter(r => r.status === 'Menunggu Validasi');
+      const inProgress = reports.filter(r => r.status === 'Dalam Perbaikan');
+
+      return (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Dashboard Operasional Petugas</h2>
+              <p className="text-xs text-on-surface-variant">UPTD Wilayah I — Dinas Bina Marga & Bina Konstruksi Provinsi Lampung</p>
+            </div>
+            <button
+              onClick={() => onNavigate('antrean-laporan')}
+              className="px-4 py-2 rounded-xl bg-secondary text-white font-semibold text-xs flex items-center gap-2 hover:bg-secondary-container w-fit"
+            >
+              <i data-lucide="inbox" className="w-4 h-4"></i>
+              Periksa Antrean ({waiting.length})
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+            <KPICard label="Total Tiket UPTD" value={reports.length} subtext="Wilayah I" icon="clipboard" />
+            <KPICard label="Menunggu Validasi" value={waiting.length} subtext="Perlu inspeksi" icon="alert-circle" color="amber-500" />
+            <KPICard label="Dalam SPK Fisik" value={inProgress.length} subtext="Sedang dikerjakan" icon="hard-hat" color="purple-600" />
+            <KPICard label="Tuntas & PHO" value={reports.filter(r => r.status === 'Selesai').length} subtext="Bulan Mei 2026" icon="check-circle" color="emerald-600" />
+            <KPICard label="Rata-rata Respon" value="1.8 Hari" subtext="Target SLA < 2.0" icon="zap" color="blue-600" />
+          </div>
+
+          <div className="p-6 rounded-2xl bg-white border border-surface-container">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-heading font-bold text-base text-primary flex items-center gap-2">
+                <i data-lucide="flame" className="w-5 h-5 text-red-600"></i>
+                Laporan Kritis dengan Penghitung Mundur SLA (Live Countdown)
+              </h3>
+              <span className="text-xs font-mono text-red-600 font-bold bg-red-50 px-2.5 py-1 rounded-lg border border-red-200 hidden sm:inline">
+                Prioritas Penanganan Cepat
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {reports.filter(r => r.severity === 'Berat' && r.status !== 'Selesai').map(r => (
+                <div key={r.id} className="p-4 rounded-xl bg-surface-container-low border border-surface-container flex flex-col md:flex-row md:items-center justify-between gap-4 hover:border-secondary transition-all">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-200 shrink-0">
+                      <img src={r.photos.before} alt="Visual" className="w-full h-full object-cover" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-secondary text-xs">{r.report_code}</span>
+                        {getSeverityBadge(r.severity)}
+                        <span className="text-[11px] text-on-surface-variant font-medium">AI Score: <strong>{r.ai_urgency_score}</strong></span>
+                      </div>
+                      <div className="font-bold text-xs text-primary mt-0.5">{r.title}</div>
+                      <div className="text-[11px] text-on-surface-variant">{r.address}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 pt-2 md:pt-0">
+                    <div className="text-left md:text-right">
+                      <div className="text-[10px] text-on-surface-variant font-semibold uppercase">Sisa Waktu SLA:</div>
+                      <div className="font-mono font-extrabold text-red-600 text-sm">
+                        {formatSLA(r.sla_seconds_left)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onSelectReport(r)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-primary text-white hover:bg-primary-container"
+                    >
+                      Asesmen Teknis
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function OfficerQueue({ reports, onSelectReport, onRejectClick }) {
+      return (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Antrean Laporan Masuk</h2>
+            <p className="text-xs text-on-surface-variant">Lakukan verifikasi bukti foto, kesesuaian koordinat ruas, dan penentuan SPK</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">Kode Tiket</th>
+                  <th className="py-3.5 px-4">Foto Bukti</th>
+                  <th className="py-3.5 px-4">Judul & Lokasi</th>
+                  <th className="py-3.5 px-4">Pelapor & Reputasi</th>
+                  <th className="py-3.5 px-4">Keparahan</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4 text-center">Keputusan</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {reports.map(r => (
+                  <tr key={r.id} className="hover:bg-surface-container-low/60">
+                    <td className="py-3 px-4 font-mono font-bold text-secondary">{r.report_code}</td>
+                    <td className="py-3 px-4">
+                      <img src={r.photos.before} alt="Bukti" className="w-12 h-10 object-cover rounded-lg" />
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-bold text-primary">{r.title}</div>
+                      <div className="text-[11px] text-on-surface-variant">{r.road_name}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-on-surface">{r.reporter_name}</div>
+                      <div className="text-[11px] text-emerald-600 font-semibold">{r.reporter_reputation}% Skor Valid</div>
+                    </td>
+                    <td className="py-3 px-4">{getSeverityBadge(r.severity)}</td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${getStatusStyle(r.status)}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center space-x-2">
+                      <button
+                        onClick={() => onSelectReport(r)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-secondary text-white hover:bg-secondary-container"
+                      >
+                        Verifikasi
+                      </button>
+                      {r.status === 'Menunggu Validasi' && (
+                        <button
+                          onClick={() => onRejectClick(r)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200"
+                        >
+                          Tolak
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function OfficerSPKView({ reports, onUpdateProgress }) {
+      const spkReports = reports.filter(r => r.work_update);
+
+      return (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Manajemen SPK & Penanganan Fisik</h2>
+            <p className="text-xs text-on-surface-variant">Update log harian pekerjaan konstruksi lapangan dan penerbitan dokumen PHO</p>
+          </div>
+
+          <div className="space-y-6">
+            {spkReports.map(r => (
+              <div key={r.id} className="p-6 rounded-3xl bg-white border border-surface-container shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-surface-container gap-2">
+                  <div>
+                    <span className="font-mono text-xs font-bold text-secondary bg-secondary-fixed px-2.5 py-1 rounded-lg">
+                      Nomor SPK: {r.work_update.spk_number}
+                    </span>
+                    <h3 className="font-heading font-bold text-lg text-primary mt-2">{r.title}</h3>
+                    <p className="text-xs text-on-surface-variant">{r.address} · Rekanan: <strong>{r.work_update.contractor}</strong></p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <span className="text-xs font-semibold text-on-surface-variant">Progres Fisik:</span>
+                    <div className="font-heading font-extrabold text-2xl text-primary">{r.work_update.progress}%</div>
+                  </div>
+                </div>
+
+                <div className="w-full bg-surface-container rounded-full h-3 overflow-hidden">
+                  <div 
+                    className="bg-secondary h-3 rounded-full transition-all duration-500" 
+                    style={{ width: `${r.work_update.progress}%` }}
+                  ></div>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-bold text-on-surface mb-2">Komparasi Foto 3 Fase Penanganan:</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="rounded-xl overflow-hidden border border-slate-200">
+                      <div className="bg-slate-100 text-[10px] font-bold py-1 px-2 text-on-surface-variant uppercase">1. Sebelum (Before)</div>
+                      <img src={r.photos.before} alt="Before" className="h-32 w-full object-cover" />
+                    </div>
+                    <div className="rounded-xl overflow-hidden border border-slate-200">
+                      <div className="bg-purple-100 text-[10px] font-bold py-1 px-2 text-purple-800 uppercase">2. Saat Pengerjaan (In-Progress)</div>
+                      <img src={r.photos.in_progress || r.photos.before} alt="In Progress" className="h-32 w-full object-cover" />
+                    </div>
+                    <div className="rounded-xl overflow-hidden border border-slate-200">
+                      <div className="bg-emerald-100 text-[10px] font-bold py-1 px-2 text-emerald-800 uppercase">3. Hasil Akhir (After / PHO)</div>
+                      {r.photos.after ? (
+                        <img src={r.photos.after} alt="After" className="h-32 w-full object-cover" />
+                      ) : (
+                        <div className="h-32 flex items-center justify-center bg-slate-50 text-[11px] text-slate-400">
+                          Menunggu Pekerjaan 100%
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 gap-3">
+                  <p className="text-xs text-on-surface-variant">
+                    Catatan Terkini: <em>"{r.work_update.notes}"</em>
+                  </p>
+                  <div className="space-x-3">
+                    {r.work_update.progress < 100 && (
+                      <button
+                        onClick={() => onUpdateProgress(r.id, 100, 'Pekerjaan perkerasan aspal tuntas 100% dan uji kerataan lulus.', true)}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 shadow-md flex items-center gap-1.5"
+                      >
+                        <i data-lucide="check-circle" className="w-4 h-4"></i>
+                        Tandai Selesai & Terbitkan PHO
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function OfficerPerformance({ currentUser, reports, onLogoutClick }) {
+      return (
+        <div className="space-y-6">
+          <div className="p-6 rounded-3xl bg-white border border-surface-container">
+            <h3 className="font-heading font-bold text-xl text-primary mb-4">Profil Petugas & Rekap Mutu Kerja</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <KPICard label="Total Laporan Selesai" value="289" subtext="Sejak Januari 2026" icon="check" />
+              <KPICard label="Rata-rata Respon Verifikasi" value="2.4 Jam" subtext="SLA 24 Jam" icon="zap" />
+              <KPICard label="Indeks Kepuasan Warga" value="4.8 / 5.0" subtext="Dari 312 ulasan" icon="star" />
+              <KPICard label="Sertifikasi LPJK" value="Madya" subtext="Ahli Jalan & Jembatan" icon="award" />
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-surface-container pt-4 gap-3">
+              <p className="text-xs text-on-surface-variant">
+                Petugas: <strong>{currentUser.name}</strong> · NIP: {currentUser.nik} · Penempatan: {currentUser.uptd_region}
+              </p>
+              <button
+                onClick={onLogoutClick}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 transition-all flex items-center gap-1.5 w-fit"
+              >
+                <i data-lucide="log-out" className="w-4 h-4"></i>
+                Keluar Sesi
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- ADMIN COMPONENTS ---
+
+    function AdminCommandCenter({ reports, roads, onSelectReport }) {
+      return (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Executive Command Center Provinsi Lampung</h2>
+            <p className="text-xs text-on-surface-variant">Monitoring agregat kondisi infrastruktur jalan dan penanganan kerusakan se-Lampung</p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-3">
+            <KPICard label="Total Laporan" value="1.428" subtext="Provinsi" icon="layers" />
+            <KPICard label="Menunggu" value="38" subtext="Antrean" icon="clock" color="amber-500" />
+            <KPICard label="Dikerjakan" value="64" subtext="On progress" icon="tool" color="purple-600" />
+            <KPICard label="Tuntas (PHO)" value="1.142" subtext="Tahun 2026" icon="check" color="emerald-600" />
+            <KPICard label="Kemantapan" value="92.8%" subtext="Target 95%" icon="activity" color="blue-600" />
+            <KPICard label="Total Ruas" value={roads.length + 181} subtext="1.774 KM" icon="git-branch" />
+            <KPICard label="Pengguna" value="8.492" subtext="Masyarakat" icon="users" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-7 p-6 rounded-3xl bg-white border border-surface-container">
+              <h3 className="font-heading font-bold text-base text-primary mb-3">Distribusi Laporan per 15 Kabupaten/Kota</h3>
+              <div className="space-y-2.5 text-xs">
+                {[
+                  { name: 'Kota Bandar Lampung', total: 412, pct: 28 },
+                  { name: 'Kabupaten Lampung Selatan', total: 298, pct: 21 },
+                  { name: 'Kabupaten Lampung Tengah', total: 210, pct: 15 },
+                  { name: 'Kota Metro', total: 145, pct: 10 },
+                  { name: 'Kabupaten Tulang Bawang', total: 98, pct: 7 },
+                  { name: '10 Kabupaten Lainnya', total: 265, pct: 19 },
+                ].map(item => (
+                  <div key={item.name} className="space-y-1">
+                    <div className="flex justify-between font-medium">
+                      <span>{item.name}</span>
+                      <span className="font-bold text-primary">{item.total} laporan ({item.pct}%)</span>
+                    </div>
+                    <div className="w-full bg-surface-container h-2 rounded-full overflow-hidden">
+                      <div className="bg-secondary h-2 rounded-full" style={{ width: `${item.pct * 3}%` }}></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="lg:col-span-5 p-6 rounded-3xl bg-white border border-surface-container flex flex-col justify-between">
+              <div>
+                <h3 className="font-heading font-bold text-base text-primary mb-2">Status AI Pothole Sentinel</h3>
+                <p className="text-xs text-on-surface-variant mb-4">
+                  Kamera sensor koridor tol & jalan strategis provinsi aktif 24 jam memindai indeks kekasaran jalan (IRI).
+                </p>
+                <div className="p-4 rounded-2xl bg-surface-container-low border border-surface-container space-y-2 text-xs">
+                  <div className="flex justify-between"><span className="text-on-surface-variant">Rata-rata IRI Provinsi:</span> <strong className="font-mono text-primary">3.4 (Mantap)</strong></div>
+                  <div className="flex justify-between"><span className="text-on-surface-variant">Akurasi AI Vision:</span> <strong className="font-mono text-emerald-600">97.8% Presisi</strong></div>
+                  <div className="flex justify-between"><span className="text-on-surface-variant">Blackspot Prioritas:</span> <strong className="text-red-600">Jl. Ryacudu KM 4.2</strong></div>
+                </div>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-xl text-[11px] text-blue-900 mt-4 border border-blue-200">
+                Kolaborasi Riset: <strong>Universitas Teknokrat Indonesia</strong> & Dinas BMBK Lampung.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function AdminReportManagement({ reports, onSelectReport }) {
+      return (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Kelola Seluruh Laporan</h2>
+              <p className="text-xs text-on-surface-variant">Akses verifikasi administratif penuh, penugasan SPK, dan ekspor laporan</p>
+            </div>
+            <button 
+              onClick={() => alert('Simulasi: Rekapitulasi laporan berhasil diekspor ke format XLSX & PDF resmi.')}
+              className="px-4 py-2 rounded-xl bg-primary text-white text-xs font-semibold hover:bg-primary-container flex items-center gap-2 w-fit"
+            >
+              <i data-lucide="download" className="w-4 h-4"></i>
+              Ekspor Rekap (CSV/PDF)
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">Tiket</th>
+                  <th className="py-3.5 px-4">Judul Laporan</th>
+                  <th className="py-3.5 px-4">Ruas Jalan</th>
+                  <th className="py-3.5 px-4">Wilayah</th>
+                  <th className="py-3.5 px-4">Status</th>
+                  <th className="py-3.5 px-4">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {reports.map(r => (
+                  <tr key={r.id} className="hover:bg-surface-container-low/60">
+                    <td className="py-3.5 px-4 font-mono font-bold text-secondary">{r.report_code}</td>
+                    <td className="py-3.5 px-4 font-bold text-primary">{r.title}</td>
+                    <td className="py-3.5 px-4 text-on-surface">{r.road_name}</td>
+                    <td className="py-3.5 px-4 text-on-surface-variant">{r.district}</td>
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${getStatusStyle(r.status)}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <button
+                        onClick={() => onSelectReport(r)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-container text-primary hover:bg-secondary hover:text-white"
+                      >
+                        Detail Audit
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function AdminRoadSegments({ roads, onAddRoad }) {
+      const [showModal, setShowModal] = useState(false);
+      const [code, setCode] = useState('');
+      const [name, setName] = useState('');
+      const [district, setDistrict] = useState(LAMPUNG_DISTRICTS[0]);
+      const [length, setLength] = useState('5.0');
+      const [status, setStatus] = useState('Mantap');
+
+      const handleAdd = () => {
+        const cleanCode = escapeHtml(code.trim());
+        const cleanName = escapeHtml(name.trim());
+
+        if (!cleanCode || !cleanName) {
+          alert('Kode dan nama ruas jalan wajib diisi!');
+          return;
+        }
+        onAddRoad({
+          id: `rd-${Date.now()}`,
+          code: cleanCode,
+          name: cleanName,
+          district,
+          length: parseFloat(length),
+          status,
+          sta: 'STA 0+000 - STA 5+000'
+        });
+        setShowModal(false);
+        setCode('');
+        setName('');
+      };
+
+      return (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Data Ruas Jalan Provinsi (KDJ)</h2>
+              <p className="text-xs text-on-surface-variant">Inventaris geometris jalan provinsi untuk penautan otomatis laporan</p>
+            </div>
+            <button
+              onClick={() => setShowModal(true)}
+              className="px-4 py-2 rounded-xl bg-secondary text-white font-semibold text-xs flex items-center gap-2 hover:bg-secondary-container w-fit"
+            >
+              <i data-lucide="plus" className="w-4 h-4"></i>
+              Tambah Ruas Jalan
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">Kode KDJ</th>
+                  <th className="py-3.5 px-4">Nama Ruas Jalan</th>
+                  <th className="py-3.5 px-4">Kabupaten/Kota</th>
+                  <th className="py-3.5 px-4">Panjang (KM)</th>
+                  <th className="py-3.5 px-4">Kondisi</th>
+                  <th className="py-3.5 px-4">STA Titik Awal & Akhir</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {roads.map(rd => (
+                  <tr key={rd.id} className="hover:bg-surface-container-low/60">
+                    <td className="py-3.5 px-4 font-mono font-bold text-secondary">{rd.code}</td>
+                    <td className="py-3.5 px-4 font-bold text-primary">{rd.name}</td>
+                    <td className="py-3.5 px-4 text-on-surface">{rd.district}</td>
+                    <td className="py-3.5 px-4 font-mono">{rd.length} KM</td>
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        rd.status === 'Mantap' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {rd.status}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-on-surface-variant font-mono text-[11px]">{rd.sta}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {showModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+                <h3 className="font-heading font-bold text-lg text-primary mb-4">Tambah Ruas Jalan Baru</h3>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="block font-bold mb-1">Kode KDJ:</label>
+                    <input 
+                      type="text" 
+                      value={code} 
+                      onChange={(e) => setCode(e.target.value)} 
+                      placeholder="Contoh: KDJ-LPG-006" 
+                      className="w-full p-2.5 border rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold mb-1">Nama Ruas:</label>
+                    <input 
+                      type="text" 
+                      value={name} 
+                      onChange={(e) => setName(e.target.value)} 
+                      placeholder="Contoh: Jl. Raden Gunawan" 
+                      className="w-full p-2.5 border rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold mb-1">Kabupaten/Kota:</label>
+                    <select 
+                      value={district} 
+                      onChange={(e) => setDistrict(e.target.value)} 
+                      className="w-full p-2.5 border rounded-xl"
+                    >
+                      {LAMPUNG_DISTRICTS.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold mb-1">Panjang (KM):</label>
+                      <input 
+                        type="number" 
+                        value={length} 
+                        onChange={(e) => setLength(e.target.value)} 
+                        className="w-full p-2.5 border rounded-xl"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold mb-1">Kondisi Awal:</label>
+                      <select 
+                        value={status} 
+                        onChange={(e) => setStatus(e.target.value)} 
+                        className="w-full p-2.5 border rounded-xl"
+                      >
+                        <option value="Mantap">Mantap</option>
+                        <option value="Rusak Ringan">Rusak Ringan</option>
+                        <option value="Rusak Berat">Rusak Berat</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 mt-6">
+                  <button onClick={() => setShowModal(false)} className="px-4 py-2 text-xs font-semibold text-on-surface-variant">Batal</button>
+                  <button onClick={handleAdd} className="px-5 py-2 text-xs font-semibold bg-primary text-white rounded-xl">Simpan Ruas</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function AdminUserManagement({ users }) {
+      return (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Manajemen Pengguna & Hak Akses (RBAC)</h2>
+            <p className="text-xs text-on-surface-variant">Kelola akun Masyarakat, Petugas Lapangan UPTD, dan Administrator Pemda</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">Nama Lengkap</th>
+                  <th className="py-3.5 px-4">Email</th>
+                  <th className="py-3.5 px-4">Peran (Role)</th>
+                  <th className="py-3.5 px-4">Instansi / Wilayah</th>
+                  <th className="py-3.5 px-4">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {users.map(u => (
+                  <tr key={u.id} className="hover:bg-surface-container-low/60">
+                    <td className="py-3.5 px-4 font-bold text-primary">{u.name}</td>
+                    <td className="py-3.5 px-4 font-mono text-on-surface-variant">{u.email}</td>
+                    <td className="py-3.5 px-4">
+                      <span className="px-2.5 py-0.5 rounded-full font-bold text-xs bg-secondary-fixed text-primary">
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-on-surface-variant">{u.uptd_region || 'Warga Terverifikasi'}</td>
+                    <td className="py-3.5 px-4">
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                        Aktif
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function AdminAuditTrail({ logs, onViewPayload }) {
+      return (
+        <div className="space-y-6">
+          <div>
+            <h2 className="font-heading font-extrabold text-xl sm:text-2xl text-primary">Audit Log & Integritas Kriptografis</h2>
+            <p className="text-xs text-on-surface-variant">Catatan immutable seluruh mutasi status laporan dengan verifikasi Hash SHA-256</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-surface-container overflow-x-auto shadow-xs">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead className="bg-surface-container-low text-on-surface-variant uppercase font-semibold text-[11px] border-b border-surface-container">
+                <tr>
+                  <th className="py-3.5 px-4">ID Transaksi</th>
+                  <th className="py-3.5 px-4">Waktu</th>
+                  <th className="py-3.5 px-4">Aktor Pengubah</th>
+                  <th className="py-3.5 px-4">Aksi / Event</th>
+                  <th className="py-3.5 px-4">Hash SHA-256</th>
+                  <th className="py-3.5 px-4 text-center">Payload JSON</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-container">
+                {logs.map(log => (
+                  <tr key={log.id} className="hover:bg-surface-container-low/60">
+                    <td className="py-3.5 px-4 font-mono font-bold text-secondary">{log.audit_code}</td>
+                    <td className="py-3.5 px-4 text-on-surface-variant">{log.timestamp}</td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-bold text-primary">{log.actor_name}</div>
+                      <div className="text-[11px] text-on-surface-variant">{log.actor_role}</div>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono font-semibold text-primary">{log.action}</td>
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500">
+                      {log.hash ? `${log.hash.slice(0, 16)}...` : 'SHA256_VERIFIED'}
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        onClick={() => onViewPayload(log)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800"
+                      >
+                        Buka Payload
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // --- REPORT DETAIL & TRACKING MODAL ---
+
+    function ReportDetailModal({ report, currentUser, onClose, onStatusUpdate }) {
+      const [newNote, setNewNote] = useState('');
+      const [nextStatus, setNextStatus] = useState('Diverifikasi');
+
+      // Kalkulator Asesmen Teknis Petugas
+      const [lengthM, setLengthM] = useState(5.0);
+      const [widthM, setWidthM] = useState(2.0);
+      const [depthM, setDepthM] = useState(0.12);
+      const volumeM3 = (lengthM * widthM * depthM).toFixed(3);
+      const estimatedCost = (volumeM3 * 6500000).toLocaleString('id-ID');
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5 sm:p-8 shadow-2xl border border-surface-container">
+            <div className="flex items-center justify-between pb-6 mb-6 border-b border-surface-container">
+              <div>
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <span className="font-mono text-xs sm:text-sm font-bold text-secondary bg-secondary-fixed px-3 py-1 rounded-xl">
+                    {report.report_code}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusStyle(report.status)}`}>
+                    {report.status}
+                  </span>
+                  {getSeverityBadge(report.severity)}
+                </div>
+                <h3 className="font-heading font-extrabold text-lg sm:text-xl text-primary mt-2">{report.title}</h3>
+                <p className="text-xs text-on-surface-variant">{report.address} · Dilaporkan pada {report.created_at}</p>
+              </div>
+              <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 hover:text-primary">
+                <i data-lucide="x" className="w-6 h-6"></i>
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="p-5 sm:p-6 rounded-2xl bg-surface-container-low border border-surface-container">
+                <h4 className="font-heading font-bold text-xs text-primary uppercase tracking-wider mb-4">
+                  Riwayat & Tahapan Penanganan (Tracking 5 Tahap)
+                </h4>
+                <div className="relative border-l-2 border-secondary/30 ml-4 space-y-6 pl-6">
+                  {report.histories.map((h, idx) => (
+                    <div key={idx} className="relative">
+                      <div className="absolute -left-[31px] top-0 w-4 h-4 rounded-full bg-secondary border-4 border-white shadow-xs"></div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                        <strong className="text-xs text-primary font-bold">{h.status}</strong>
+                        <span className="text-[11px] text-on-surface-variant font-mono">{h.time}</span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant mt-1 leading-relaxed">{h.note}</p>
+                      <span className="text-[10px] text-secondary font-semibold">Oleh: {h.by}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-xs text-on-surface mb-3">Foto Dokumentasi Lapangan:</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="rounded-2xl overflow-hidden border border-slate-200">
+                    <div className="bg-slate-100 text-[10px] font-bold py-1 px-3 text-on-surface-variant uppercase">Foto Sebelum</div>
+                    <img src={report.photos.before} alt="Sebelum" className="h-40 w-full object-cover" />
+                  </div>
+                  {report.photos.in_progress && (
+                    <div className="rounded-2xl overflow-hidden border border-slate-200">
+                      <div className="bg-purple-100 text-[10px] font-bold py-1 px-3 text-purple-800 uppercase">Saat Pengerjaan</div>
+                      <img src={report.photos.in_progress} alt="Proses" className="h-40 w-full object-cover" />
+                    </div>
+                  )}
+                  {report.photos.after && (
+                    <div className="rounded-2xl overflow-hidden border border-slate-200">
+                      <div className="bg-emerald-100 text-[10px] font-bold py-1 px-3 text-emerald-800 uppercase">Hasil Akhir (PHO)</div>
+                      <img src={report.photos.after} alt="Selesai" className="h-40 w-full object-cover" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {(currentUser.role === 'Petugas' || currentUser.role === 'Admin') && report.status !== 'Selesai' && (
+                <div className="p-5 sm:p-6 rounded-2xl bg-blue-50/50 border border-blue-200 space-y-4">
+                  <div className="flex items-center gap-2 text-primary font-bold text-xs">
+                    <i data-lucide="calculator" className="w-4 h-4 text-secondary"></i>
+                    Kalkulator Asesmen Teknis & Estimasi Kebutuhan Aspal (UPTD)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <label className="block text-on-surface-variant mb-1">Panjang (P) meter:</label>
+                      <input 
+                        type="number" 
+                        step="0.1" 
+                        value={lengthM} 
+                        onChange={(e) => setLengthM(parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 bg-white rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-on-surface-variant mb-1">Lebar (L) meter:</label>
+                      <input 
+                        type="number" 
+                        step="0.1" 
+                        value={widthM} 
+                        onChange={(e) => setWidthM(parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 bg-white rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-on-surface-variant mb-1">Kedalaman (D) meter:</label>
+                      <input 
+                        type="number" 
+                        step="0.01" 
+                        value={depthM} 
+                        onChange={(e) => setDepthM(parseFloat(e.target.value) || 0)}
+                        className="w-full p-2 bg-white rounded-lg border border-slate-300"
+                      />
+                    </div>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between text-xs gap-2">
+                    <div>
+                      <span className="text-on-surface-variant">Estimasi Volume Kerusakan:</span>
+                      <strong className="text-primary font-mono ml-2 text-sm">{volumeM3} m³</strong>
+                    </div>
+                    <div>
+                      <span className="text-on-surface-variant">Estimasi Biaya Penanganan:</span>
+                      <strong className="text-emerald-600 font-mono ml-2 text-sm">Rp {estimatedCost}</strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(currentUser.role === 'Petugas' || currentUser.role === 'Admin') && (
+                <div className="pt-4 border-t border-surface-container space-y-3">
+                  <h4 className="font-bold text-xs text-primary">Tindak Lanjut & Pembaruan Status</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select
+                      value={nextStatus}
+                      onChange={(e) => setNextStatus(e.target.value)}
+                      className="p-2.5 text-xs rounded-xl border border-slate-300 font-semibold"
+                    >
+                      <option value="Diverifikasi">Ubah ke: Diverifikasi</option>
+                      <option value="Diterima / SPK Diterbitkan">Ubah ke: Diterima & Terbitkan SPK</option>
+                      <option value="Dalam Perbaikan">Ubah ke: Dalam Perbaikan Fisik</option>
+                      <option value="Selesai">Ubah ke: Selesai & Terbitkan PHO</option>
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Tuliskan catatan tindak lanjut..."
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      className="p-2.5 text-xs rounded-xl border border-slate-300"
+                    />
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!newNote.trim()) {
+                        alert('Catatan tindak lanjut wajib diisi!');
+                        return;
+                      }
+                      onStatusUpdate(nextStatus, newNote);
+                      setNewNote('');
+                    }}
+                    className="px-5 py-2 rounded-xl text-xs font-semibold bg-secondary text-white hover:bg-secondary-container shadow-md"
+                  >
+                    Simpan Perubahan Status
+                  </button>
+                </div>
+              )}
+
+              {report.status === 'Selesai' && (
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs">
+                  <div className="font-bold text-emerald-900 mb-1 flex items-center gap-1.5">
+                    <i data-lucide="star" className="w-4 h-4 text-amber-500 fill-amber-500"></i>
+                    Evaluasi & Ulasan Kepuasan Pelapor (Rating 5/5)
+                  </div>
+                  <p className="text-emerald-800 italic">"{report.feedback || 'Penanganan sangat cepat dan kondisi jalan sudah kembali mantap!'}"</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Render App into DOM
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
